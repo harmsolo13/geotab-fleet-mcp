@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fleet Dashboard — Geotab MCP</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Sidebar Panel -->
+    <aside id="sidebar" class="sidebar">
+        <div class="sidebar-header">
+            <h1 class="logo">
+                <span class="logo-icon">&#9670;</span>
+                Fleet Dashboard
+            </h1>
+            <span class="badge" id="connectionBadge">Connecting...</span>
+        </div>
+
+        <!-- Fleet Stats -->
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card">
+                <span class="stat-value" id="statTotal">--</span>
+                <span class="stat-label">Vehicles</span>
+            </div>
+            <div class="stat-card stat-moving">
+                <span class="stat-value" id="statMoving">--</span>
+                <span class="stat-label">Moving</span>
+            </div>
+            <div class="stat-card stat-stopped">
+                <span class="stat-value" id="statStopped">--</span>
+                <span class="stat-label">Stopped</span>
+            </div>
+            <div class="stat-card stat-fault">
+                <span class="stat-value" id="statFaults">--</span>
+                <span class="stat-label">Faults</span>
+            </div>
+        </div>
+
+        <!-- Vehicle List -->
+        <div class="section">
+            <h2 class="section-title">Vehicles</h2>
+            <input type="text" id="vehicleSearch" class="search-input" placeholder="Search vehicles...">
+            <div id="vehicleList" class="vehicle-list">
+                <div class="loading">Loading fleet data...</div>
+            </div>
+        </div>
+
+        <!-- Faults Section -->
+        <div class="section">
+            <h2 class="section-title">Active Faults</h2>
+            <div id="faultList" class="fault-list">
+                <div class="loading">Loading faults...</div>
+            </div>
+        </div>
+
+        <!-- Powered By -->
+        <div class="sidebar-footer">
+            <span>Powered by Geotab + Google Maps + Gemini AI</span>
+        </div>
+    </aside>
+
+    <!-- Vehicle Detail Panel (shown on marker click) -->
+    <div id="detailPanel" class="detail-panel hidden">
+        <button class="detail-close" onclick="closeDetail()">&times;</button>
+        <div id="detailContent"></div>
+    </div>
+
+    <!-- Map Container -->
+    <div id="map"></div>
+
+    <!-- Google Maps JS API -->
+    <script>
+        window.MAPS_API_KEY = "{{ maps_api_key }}";
+    </script>
+    <script async defer
+        src="https://maps.googleapis.com/maps/api/js?key={{ maps_api_key }}&callback=initMap&libraries=marker">
+    </script>
+    <script src="/static/js/fleet-map.js"></script>
+</body>
+</html>
