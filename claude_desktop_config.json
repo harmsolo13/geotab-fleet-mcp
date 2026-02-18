@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "geotab-fleet": {
+      "command": "python",
+      "args": ["-m", "geotab_mcp.server"],
+      "cwd": "/path/to/geotab-fleet-mcp/src",
+      "env": {
+        "GEOTAB_DATABASE": "your_database",
+        "GEOTAB_USERNAME": "your_email@example.com",
+        "GEOTAB_PASSWORD": "your_password",
+        "GEOTAB_SERVER": "my.geotab.com"
+      }
+    }
+  }
+}

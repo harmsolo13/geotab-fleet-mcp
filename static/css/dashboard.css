@@ -1,0 +1,490 @@
+/* Fleet Dashboard — Dark Theme with Glass Morphism */
+
+:root {
+    --bg-primary: #0a0e1a;
+    --bg-card: rgba(15, 20, 35, 0.85);
+    --bg-card-hover: rgba(25, 32, 55, 0.9);
+    --border-glass: rgba(255, 255, 255, 0.08);
+    --text-primary: #e8ecf4;
+    --text-secondary: #8892a8;
+    --text-muted: #5a6478;
+    --accent-blue: #4a9eff;
+    --accent-green: #34d399;
+    --accent-yellow: #fbbf24;
+    --accent-red: #f87171;
+    --accent-purple: #a78bfa;
+    --sidebar-width: 360px;
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: var(--font);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    overflow: hidden;
+    height: 100vh;
+}
+
+/* ── Map ─────────────────────────────────────────────────────────────── */
+
+#map {
+    position: absolute;
+    top: 0;
+    left: var(--sidebar-width);
+    right: 0;
+    bottom: 0;
+    z-index: 1;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────── */
+
+.sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: var(--sidebar-width);
+    height: 100vh;
+    background: var(--bg-card);
+    backdrop-filter: blur(20px);
+    border-right: 1px solid var(--border-glass);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.sidebar-header {
+    padding: 20px;
+    border-bottom: 1px solid var(--border-glass);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.logo {
+    font-size: 18px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.logo-icon {
+    color: var(--accent-blue);
+    font-size: 20px;
+}
+
+.badge {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-weight: 600;
+    background: rgba(251, 191, 36, 0.15);
+    color: var(--accent-yellow);
+}
+
+.badge.connected {
+    background: rgba(52, 211, 153, 0.15);
+    color: var(--accent-green);
+}
+
+.badge.error {
+    background: rgba(248, 113, 113, 0.15);
+    color: var(--accent-red);
+}
+
+/* ── Stats Grid ──────────────────────────────────────────────────────── */
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 8px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-glass);
+}
+
+.stat-card {
+    text-align: center;
+    padding: 10px 4px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-glass);
+}
+
+.stat-value {
+    display: block;
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.stat-label {
+    display: block;
+    font-size: 10px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 2px;
+}
+
+.stat-moving .stat-value { color: var(--accent-green); }
+.stat-stopped .stat-value { color: var(--text-secondary); }
+.stat-fault .stat-value { color: var(--accent-red); }
+
+/* ── Sections ────────────────────────────────────────────────────────── */
+
+.section {
+    padding: 16px 20px 0;
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.section-title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+}
+
+.search-input {
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-glass);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: var(--font);
+    outline: none;
+    margin-bottom: 10px;
+    transition: border-color 0.2s;
+}
+
+.search-input:focus {
+    border-color: var(--accent-blue);
+}
+
+.search-input::placeholder {
+    color: var(--text-muted);
+}
+
+/* ── Vehicle List ────────────────────────────────────────────────────── */
+
+.vehicle-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 300px;
+    overflow-y: auto;
+    padding-bottom: 12px;
+}
+
+.vehicle-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s;
+    border: 1px solid transparent;
+}
+
+.vehicle-item:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-glass);
+}
+
+.vehicle-item.selected {
+    background: rgba(74, 158, 255, 0.1);
+    border-color: rgba(74, 158, 255, 0.3);
+}
+
+.vehicle-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.vehicle-dot.moving { background: var(--accent-green); box-shadow: 0 0 6px var(--accent-green); }
+.vehicle-dot.stopped { background: var(--text-muted); }
+.vehicle-dot.fault { background: var(--accent-red); box-shadow: 0 0 6px var(--accent-red); }
+.vehicle-dot.offline { background: var(--text-muted); opacity: 0.4; }
+
+.vehicle-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.vehicle-name {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.vehicle-meta {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.vehicle-speed {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+/* ── Fault List ──────────────────────────────────────────────────────── */
+
+.fault-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 180px;
+    overflow-y: auto;
+    padding-bottom: 12px;
+}
+
+.fault-item {
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(248, 113, 113, 0.06);
+    border: 1px solid rgba(248, 113, 113, 0.12);
+    font-size: 12px;
+}
+
+.fault-item .fault-device {
+    font-weight: 600;
+    color: var(--accent-red);
+}
+
+.fault-item .fault-desc {
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+/* ── Detail Panel ────────────────────────────────────────────────────── */
+
+.detail-panel {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    width: 380px;
+    max-height: calc(100vh - 40px);
+    background: var(--bg-card);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border-glass);
+    border-radius: 16px;
+    z-index: 20;
+    padding: 24px;
+    overflow-y: auto;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.detail-panel.hidden {
+    display: none;
+}
+
+.detail-close {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 24px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 4px;
+}
+
+.detail-close:hover {
+    color: var(--text-primary);
+}
+
+.detail-panel h2 {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.detail-panel .detail-subtitle {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+}
+
+.detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-glass);
+    font-size: 13px;
+}
+
+.detail-row .label {
+    color: var(--text-secondary);
+}
+
+.detail-row .value {
+    font-weight: 600;
+    text-align: right;
+}
+
+.detail-section-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    margin-top: 16px;
+    margin-bottom: 8px;
+}
+
+.trip-item {
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-glass);
+    margin-bottom: 6px;
+    font-size: 12px;
+}
+
+.trip-item .trip-time {
+    font-weight: 600;
+    color: var(--accent-blue);
+}
+
+.trip-item .trip-meta {
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+/* ── Sidebar Footer ──────────────────────────────────────────────────── */
+
+.sidebar-footer {
+    padding: 12px 20px;
+    border-top: 1px solid var(--border-glass);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+/* ── Loading ─────────────────────────────────────────────────────────── */
+
+.loading {
+    text-align: center;
+    padding: 20px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* ── Custom Map Marker ───────────────────────────────────────────────── */
+
+.map-marker {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: var(--bg-card);
+    border: 2px solid var(--text-muted);
+    backdrop-filter: blur(8px);
+    white-space: nowrap;
+    font-family: var(--font);
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.map-marker:hover {
+    transform: scale(1.08);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.map-marker.moving {
+    border-color: var(--accent-green);
+}
+
+.map-marker.fault {
+    border-color: var(--accent-red);
+}
+
+.map-marker .marker-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+
+.map-marker.moving .marker-dot {
+    background: var(--accent-green);
+    box-shadow: 0 0 6px var(--accent-green);
+}
+
+.map-marker.fault .marker-dot {
+    background: var(--accent-red);
+    box-shadow: 0 0 6px var(--accent-red);
+}
+
+.map-marker .marker-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+    :root {
+        --sidebar-width: 100vw;
+    }
+
+    #map {
+        left: 0;
+        height: 50vh;
+    }
+
+    .sidebar {
+        position: relative;
+        height: 50vh;
+        width: 100%;
+    }
+
+    .detail-panel {
+        left: 10px;
+        right: 10px;
+        width: auto;
+        top: auto;
+        bottom: 10px;
+    }
+}
