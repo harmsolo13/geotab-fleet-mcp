@@ -46,7 +46,7 @@ User ←→ Claude (MCP Client)
     |                                        |
     +------------ Flask Web Dashboard -------+
                    (Google Maps JS API)
-                   Port 5001
+                   Port 5030
 ```
 
 ## Tools (20 MCP Tools)
@@ -127,14 +127,14 @@ mcp dev src/geotab_mcp/server.py
 ### 4. Run the Dashboard
 
 ```bash
-# Start the Google Maps dashboard on port 5001
+# Start the Google Maps dashboard on port 5030
 python -m geotab_mcp.dashboard
 
 # Or use the CLI entry point
 geotab-dashboard
 ```
 
-Open [http://localhost:5001](http://localhost:5001) to see the live fleet map.
+Open [http://localhost:5030](http://localhost:5030) to see the live fleet map.
 
 ## Google Maps Dashboard
 

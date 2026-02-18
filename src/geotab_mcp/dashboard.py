@@ -153,7 +153,7 @@ def api_status():
 
 def main():
     """Run the dashboard server."""
-    port = int(os.getenv("DASHBOARD_PORT", "5001"))
+    port = int(os.getenv("DASHBOARD_PORT", "5030"))
     debug = os.getenv("DASHBOARD_DEBUG", "false").lower() == "true"
     print(f"Fleet Dashboard starting on http://localhost:{port}")
     app.run(host="0.0.0.0", port=port, debug=debug)
