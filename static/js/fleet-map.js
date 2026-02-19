@@ -11,6 +11,13 @@ let faults = [];        // Current fault data
 let selectedVehicle = null;
 let refreshTimer = null;
 
+// Chat state
+let chatSessionId = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36);
+let chatOpen = false;
+let chatSending = false;
+let recognition = null;
+let isRecording = false;
+
 const REFRESH_INTERVAL = 10000; // 10 seconds
 const DEFAULT_CENTER = { lat: 43.6532, lng: -79.3832 }; // Toronto (Geotab HQ)
 const DEFAULT_ZOOM = 12;
@@ -434,3 +441,236 @@ function formatDateTime(isoStr) {
         return isoStr;
     }
 }
+
+
+// ── Chat Panel ─────────────────────────────────────────────────────────
+
+function toggleChat() {
+    const panel = document.getElementById("chatPanel");
+    chatOpen = !chatOpen;
+    panel.classList.toggle("collapsed", !chatOpen);
+    if (chatOpen) {
+        const input = document.getElementById("chatInput");
+        setTimeout(() => input.focus(), 200);
+        scrollChatToBottom();
+    }
+}
+
+function scrollChatToBottom() {
+    const container = document.getElementById("chatMessages");
+    container.scrollTop = container.scrollHeight;
+}
+
+function appendMessage(role, content) {
+    const container = document.getElementById("chatMessages");
+    const bubble = document.createElement("div");
+    bubble.className = `chat-bubble ${role}`;
+
+    // Basic formatting: split on double newlines for paragraphs
+    const paragraphs = content.split(/\n\n+/).filter(Boolean);
+    bubble.innerHTML = paragraphs.map(p => {
+        // Convert single newlines to <br>, bold **text**, and inline code `text`
+        let html = p.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+        html = html.replace(/`(.+?)`/g, '<code style="background:rgba(255,255,255,0.08);padding:1px 4px;border-radius:3px;font-size:12px">$1</code>');
+        html = html.replace(/\n/g, "<br>");
+        return `<p>${html}</p>`;
+    }).join("");
+
+    container.appendChild(bubble);
+    scrollChatToBottom();
+}
+
+function setTypingIndicator(show) {
+    const container = document.getElementById("chatMessages");
+    const existing = container.querySelector(".chat-typing");
+    if (show && !existing) {
+        const el = document.createElement("div");
+        el.className = "chat-typing";
+        el.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+        container.appendChild(el);
+        scrollChatToBottom();
+    } else if (!show && existing) {
+        existing.remove();
+    }
+}
+
+async function sendMessage() {
+    if (chatSending) return;
+    const input = document.getElementById("chatInput");
+    const message = input.value.trim();
+    if (!message) return;
+
+    input.value = "";
+    appendMessage("user", message);
+    setTypingIndicator(true);
+    chatSending = true;
+
+    try {
+        const resp = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message, session_id: chatSessionId }),
+        });
+        const data = await resp.json();
+        setTypingIndicator(false);
+
+        if (data.error) {
+            appendMessage("error", "Error: " + data.error);
+        } else {
+            appendMessage("assistant", data.response);
+            // Update session ID if server assigned one
+            if (data.session_id) chatSessionId = data.session_id;
+            // Optional TTS for short responses
+            speakResponse(data.response);
+        }
+    } catch (err) {
+        setTypingIndicator(false);
+        appendMessage("error", "Failed to reach the server. Please try again.");
+    } finally {
+        chatSending = false;
+    }
+}
+
+async function clearChat() {
+    const container = document.getElementById("chatMessages");
+    // Keep only the welcome message
+    container.innerHTML = `
+        <div class="chat-bubble assistant">
+            <p>Hi! I'm your fleet assistant. Ask me anything about your vehicles, trips, faults, drivers, or zones. You can also use the mic button to speak.</p>
+        </div>
+    `;
+
+    // Clear server-side session
+    try {
+        await fetch("/api/chat/clear", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ session_id: chatSessionId }),
+        });
+    } catch (e) { /* ignore */ }
+
+    // New session
+    chatSessionId = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36);
+}
+
+
+// ── Voice Input (Web Speech API) ───────────────────────────────────────
+
+function initVoice() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        const btn = document.getElementById("micBtn");
+        btn.classList.add("disabled");
+        btn.title = "Speech recognition not supported in this browser";
+        return;
+    }
+
+    recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onresult = (event) => {
+        const input = document.getElementById("chatInput");
+        let interim = "";
+        let final = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+                final += transcript;
+            } else {
+                interim += transcript;
+            }
+        }
+        if (final) {
+            input.value = final;
+            stopVoice();
+            sendMessage();
+        } else {
+            input.value = interim;
+        }
+    };
+
+    recognition.onerror = (event) => {
+        stopVoice();
+        if (event.error === "not-allowed") {
+            appendMessage("error", "Microphone access denied. Please allow mic permissions and try again.");
+            document.getElementById("micBtn").classList.add("disabled");
+        }
+    };
+
+    recognition.onend = () => {
+        if (isRecording) stopVoice();
+    };
+}
+
+function toggleVoice() {
+    if (isRecording) {
+        stopVoice();
+    } else {
+        startVoice();
+    }
+}
+
+function startVoice() {
+    if (!recognition) {
+        appendMessage("error", "Speech recognition is not supported in your browser. Please use text input.");
+        return;
+    }
+    if (document.getElementById("micBtn").classList.contains("disabled")) return;
+
+    try {
+        recognition.start();
+        isRecording = true;
+        document.getElementById("micBtn").classList.add("recording");
+        document.getElementById("chatInput").placeholder = "Listening...";
+    } catch (e) {
+        // Already started
+    }
+}
+
+function stopVoice() {
+    if (recognition) {
+        try { recognition.stop(); } catch (e) { /* ignore */ }
+    }
+    isRecording = false;
+    document.getElementById("micBtn").classList.remove("recording");
+    document.getElementById("chatInput").placeholder = "Ask about your fleet...";
+}
+
+
+// ── TTS (Text-to-Speech) ──────────────────────────────────────────────
+
+function speakResponse(text) {
+    if (!window.speechSynthesis) return;
+    // Only speak short responses to avoid long robot monologues
+    if (text.length > 500) return;
+
+    // Strip markdown-ish formatting for cleaner speech
+    const clean = text.replace(/\*\*/g, "").replace(/`/g, "").replace(/\n+/g, ". ");
+    const utterance = new SpeechSynthesisUtterance(clean);
+    utterance.rate = 1.05;
+    utterance.pitch = 1;
+    utterance.volume = 0.8;
+    speechSynthesis.speak(utterance);
+}
+
+
+// ── Chat Event Listeners ──────────────────────────────────────────────
+
+document.addEventListener("DOMContentLoaded", () => {
+    // Enter key to send
+    const chatInput = document.getElementById("chatInput");
+    if (chatInput) {
+        chatInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+    }
+
+    // Initialize voice recognition
+    initVoice();
+});

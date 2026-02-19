@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,6 +12,7 @@ from flask import Flask, jsonify, render_template, request
 
 load_dotenv()
 
+from geotab_mcp.gemini_client import GeminiChat
 from geotab_mcp.geotab_client import GeotabClient
 
 # Resolve paths for templates and static files
@@ -27,6 +29,11 @@ app = Flask(
 # Shared Geotab client (lazy init)
 _client: GeotabClient | None = None
 
+# Chat state
+_gemini_chat: GeminiChat | None = None
+_chat_sessions: dict[str, list[dict]] = {}  # session_id -> history
+_MAX_HISTORY = 40
+
 
 def _get_client() -> GeotabClient:
     global _client
@@ -34,6 +41,13 @@ def _get_client() -> GeotabClient:
         _client = GeotabClient()
         _client.authenticate()
     return _client
+
+
+def _get_chat() -> GeminiChat:
+    global _gemini_chat
+    if _gemini_chat is None:
+        _gemini_chat = GeminiChat(_get_client())
+    return _gemini_chat
 
 
 # ── Page Routes ──────────────────────────────────────────────────────────
@@ -147,6 +161,50 @@ def api_status():
         })
     except Exception as e:
         return jsonify({"connected": False, "error": str(e)}), 500
+
+
+# ── Chat API ─────────────────────────────────────────────────────────────
+
+@app.route("/api/chat", methods=["POST"])
+def api_chat():
+    """Conversational chat with Gemini + Geotab function calling."""
+    try:
+        body = request.get_json(force=True)
+        message = (body.get("message") or "").strip()
+        session_id = body.get("session_id") or str(uuid.uuid4())
+
+        if not message:
+            return jsonify({"error": "Empty message"}), 400
+
+        history = _chat_sessions.get(session_id, [])
+        chat = _get_chat()
+        response_text = chat.chat(message, history)
+
+        # Update history
+        history.append({"role": "user", "content": message})
+        history.append({"role": "assistant", "content": response_text})
+        # Cap history length
+        if len(history) > _MAX_HISTORY:
+            history = history[-_MAX_HISTORY:]
+        _chat_sessions[session_id] = history
+
+        return jsonify({
+            "response": response_text,
+            "session_id": session_id,
+            "status": "ok",
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "status": "error"}), 500
+
+
+@app.route("/api/chat/clear", methods=["POST"])
+def api_chat_clear():
+    """Clear chat session history."""
+    body = request.get_json(force=True) if request.is_json else {}
+    session_id = body.get("session_id", "")
+    if session_id in _chat_sessions:
+        del _chat_sessions[session_id]
+    return jsonify({"status": "cleared", "session_id": session_id})
 
 
 # ── Entry Point ──────────────────────────────────────────────────────────
