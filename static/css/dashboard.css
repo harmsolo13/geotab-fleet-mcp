@@ -1,4 +1,4 @@
-/* Fleet Dashboard — Dark Theme with Glass Morphism */
+/* Fleet Dashboard — Dark/Light Theme with Glass Morphism */
 
 :root {
     --bg-primary: #0a0e1a;
@@ -15,6 +15,23 @@
     --accent-purple: #a78bfa;
     --sidebar-width: 360px;
     --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color-scheme: dark;
+}
+
+[data-theme="light"] {
+    --bg-primary: #f0f2f5;
+    --bg-card: rgba(255, 255, 255, 0.92);
+    --bg-card-hover: rgba(240, 242, 245, 0.95);
+    --border-glass: rgba(0, 0, 0, 0.1);
+    --text-primary: #1a1d23;
+    --text-secondary: #5a6478;
+    --text-muted: #8892a8;
+    --accent-blue: #2b7de9;
+    --accent-green: #16a34a;
+    --accent-yellow: #d97706;
+    --accent-red: #dc2626;
+    --accent-purple: #7c3aed;
+    color-scheme: light;
 }
 
 * {
@@ -467,8 +484,9 @@ body {
 .chat-panel {
     position: fixed;
     bottom: 20px;
-    right: 20px;
-    width: 380px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 420px;
     max-height: 520px;
     background: var(--bg-card);
     backdrop-filter: blur(20px);
@@ -705,6 +723,111 @@ body {
     cursor: not-allowed;
 }
 
+/* ── Theme Toggle ───────────────────────────────────────────────────── */
+
+.theme-toggle {
+    background: none;
+    border: 1px solid var(--border-glass);
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+
+.theme-toggle:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+    border-color: var(--accent-blue);
+}
+
+[data-theme="light"] .theme-toggle:hover {
+    background: rgba(0, 0, 0, 0.06);
+}
+
+/* ── Select Dropdown Fix ────────────────────────────────────────────── */
+
+select, select option {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+[data-theme="light"] select,
+[data-theme="light"] select option {
+    background: #ffffff;
+    color: #1a1d23;
+}
+
+/* ── Light Theme Overrides ──────────────────────────────────────────── */
+
+[data-theme="light"] .stat-card {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .search-input {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .vehicle-item:hover {
+    background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .vehicle-item.selected {
+    background: rgba(43, 125, 233, 0.08);
+    border-color: rgba(43, 125, 233, 0.25);
+}
+
+[data-theme="light"] .fault-item {
+    background: rgba(220, 38, 38, 0.06);
+    border-color: rgba(220, 38, 38, 0.12);
+}
+
+[data-theme="light"] .detail-panel,
+[data-theme="light"] .chat-panel {
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .chat-bubble.user {
+    background: rgba(43, 125, 233, 0.1);
+    border-color: rgba(43, 125, 233, 0.2);
+}
+
+[data-theme="light"] .chat-bubble.assistant {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .chat-text-input {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .map-marker {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: var(--text-muted);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .trip-item {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.25);
+}
+
 /* ── Responsive ──────────────────────────────────────────────────────── */
 
 @media (max-width: 768px) {
@@ -737,5 +860,6 @@ body {
         width: auto;
         bottom: 10px;
         max-height: 60vh;
+        transform: none;
     }
 }

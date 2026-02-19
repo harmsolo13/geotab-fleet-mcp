@@ -23,7 +23,7 @@ const DEFAULT_CENTER = { lat: 43.6532, lng: -79.3832 }; // Toronto (Geotab HQ)
 const DEFAULT_ZOOM = 12;
 
 // Map styling — dark theme
-const MAP_STYLES = [
+const MAP_STYLES_DARK = [
     { elementType: "geometry", stylers: [{ color: "#1a1a2e" }] },
     { elementType: "labels.text.stroke", stylers: [{ color: "#1a1a2e" }] },
     { elementType: "labels.text.fill", stylers: [{ color: "#6b7280" }] },
@@ -36,6 +36,13 @@ const MAP_STYLES = [
     { featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] },
 ];
 
+const MAP_STYLES_LIGHT = [
+    { featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] },
+    { featureType: "water", elementType: "geometry", stylers: [{ color: "#c9d6e3" }] },
+];
+
+const MAP_STYLES = document.documentElement.dataset.theme === "light" ? MAP_STYLES_LIGHT : MAP_STYLES_DARK;
+
 
 // ── Map Initialization ──────────────────────────────────────────────────
 
@@ -46,9 +53,11 @@ function initMap() {
         styles: MAP_STYLES,
         disableDefaultUI: false,
         zoomControl: true,
+        zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP },
         mapTypeControl: false,
         streetViewControl: false,
         fullscreenControl: true,
+        fullscreenControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP },
         mapId: "fleet-dashboard-map",
     });
 
@@ -673,4 +682,34 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Initialize voice recognition
     initVoice();
+
+    // Restore theme preference
+    const savedTheme = localStorage.getItem("fleet-theme") || "dark";
+    applyTheme(savedTheme);
 });
+
+
+// ── Theme Toggle ──────────────────────────────────────────────────────
+
+function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    // Update map styles if map is initialized
+    if (map) {
+        map.setOptions({ styles: theme === "light" ? MAP_STYLES_LIGHT : MAP_STYLES_DARK });
+    }
+    // Update theme toggle icon
+    const btn = document.getElementById("themeToggleBtn");
+    if (btn) {
+        btn.innerHTML = theme === "light"
+            ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
+            : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
+        btn.title = theme === "light" ? "Switch to dark mode" : "Switch to light mode";
+    }
+}
+
+function toggleTheme() {
+    const current = document.documentElement.dataset.theme || "dark";
+    const next = current === "dark" ? "light" : "dark";
+    localStorage.setItem("fleet-theme", next);
+    applyTheme(next);
+}
