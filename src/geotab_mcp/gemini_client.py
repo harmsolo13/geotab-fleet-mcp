@@ -311,7 +311,18 @@ class GeminiChat:
             return {"error": f"Unknown tool: {name}"}
         try:
             result = fn(args)
-            if isinstance(result, (list, dict)):
+            # Wrap list results with total count before truncation so the
+            # model knows the real size even when items are trimmed.
+            if isinstance(result, list):
+                total = len(result)
+                truncated = self._truncate(result)
+                return {
+                    "total_count": total,
+                    "returned_count": len(truncated) if isinstance(truncated, list) else total,
+                    "data": truncated,
+                    "truncated": total > (len(truncated) if isinstance(truncated, list) else total),
+                }
+            if isinstance(result, dict):
                 result = self._truncate(result)
             return result
         except Exception as e:
