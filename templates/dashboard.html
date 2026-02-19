@@ -71,6 +71,43 @@
     <!-- Map Container -->
     <div id="map"></div>
 
+    <!-- Voice Chat Panel -->
+    <div id="chatPanel" class="chat-panel collapsed">
+        <div class="chat-header" onclick="toggleChat()">
+            <div class="chat-header-left">
+                <svg class="chat-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <span>Fleet Assistant</span>
+            </div>
+            <div class="chat-header-right">
+                <button class="chat-clear-btn" onclick="event.stopPropagation(); clearChat()" title="Clear conversation">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+                </button>
+                <svg class="chat-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
+            </div>
+        </div>
+        <div class="chat-body">
+            <div class="chat-messages" id="chatMessages">
+                <div class="chat-bubble assistant">
+                    <p>Hi! I'm your fleet assistant. Ask me anything about your vehicles, trips, faults, drivers, or zones. You can also use the mic button to speak.</p>
+                </div>
+            </div>
+            <div class="chat-input-area">
+                <button class="chat-mic-btn" id="micBtn" onclick="toggleVoice()" title="Voice input">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                        <line x1="12" y1="19" x2="12" y2="23"/>
+                        <line x1="8" y1="23" x2="16" y2="23"/>
+                    </svg>
+                </button>
+                <input type="text" id="chatInput" class="chat-text-input" placeholder="Ask about your fleet..." autocomplete="off">
+                <button class="chat-send-btn" id="sendBtn" onclick="sendMessage()" title="Send message">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Google Maps JS API -->
     <script>
         window.MAPS_API_KEY = "{{ maps_api_key }}";
