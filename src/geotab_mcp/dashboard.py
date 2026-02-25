@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -34,6 +35,42 @@ _gemini_chat: GeminiChat | None = None
 _chat_sessions: dict[str, list[dict]] = {}  # session_id -> history
 _MAX_HISTORY = 40
 
+# ── TTL Cache ────────────────────────────────────────────────────────────
+# Avoids hammering the Geotab API on every dashboard page load / refresh.
+
+# TTL in seconds per data type
+_TTL = {
+    "vehicles": 60,
+    "locations": 30,
+    "trips": 300,
+    "zones": 300,
+    "faults": 120,
+    "status": 60,
+}
+
+_cache_store: dict[str, tuple[float, object]] = {}  # key -> (expires_at, data)
+
+
+def _cache_get(key: str) -> object | None:
+    """Return cached value if still valid, else None."""
+    entry = _cache_store.get(key)
+    if entry and entry[0] > time.monotonic():
+        return entry[1]
+    return None
+
+
+def _cache_set(key: str, data: object, ttl_key: str) -> None:
+    """Store data with TTL based on data type."""
+    _cache_store[key] = (time.monotonic() + _TTL.get(ttl_key, 60), data)
+
+
+def _cache_force(key: str) -> bool:
+    """Check if request has ?refresh=1 to bypass cache."""
+    if request.args.get("refresh") == "1":
+        _cache_store.pop(key, None)
+        return True
+    return False
+
 
 def _get_client() -> GeotabClient:
     global _client
@@ -50,6 +87,37 @@ def _get_chat() -> GeminiChat:
     return _gemini_chat
 
 
+def _fetch_vehicles_with_locations() -> list[dict]:
+    """Fetch vehicles + batch locations in 2 API calls (not N+1)."""
+    client = _get_client()
+
+    # Vehicles (cached separately so status endpoint can reuse)
+    vehicles = _cache_get("vehicles")
+    if vehicles is None:
+        vehicles = client.get_vehicles(limit=500)
+        _cache_set("vehicles", vehicles, "vehicles")
+
+    # Batch locations — 1 API call for ALL vehicles
+    loc_map = _cache_get("locations")
+    if loc_map is None:
+        loc_map = client.get_all_vehicle_locations()
+        _cache_set("locations", loc_map, "locations")
+
+    # Enrich vehicles with location data
+    enriched = []
+    for v in vehicles:
+        v = dict(v)  # don't mutate cached copy
+        loc = loc_map.get(v["id"], {})
+        v["latitude"] = loc.get("latitude")
+        v["longitude"] = loc.get("longitude")
+        v["speed"] = loc.get("speed")
+        v["bearing"] = loc.get("bearing")
+        v["lastUpdated"] = loc.get("dateTime")
+        v["isCommunicating"] = loc.get("isDeviceCommunicating")
+        enriched.append(v)
+    return enriched
+
+
 # ── Page Routes ──────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -63,33 +131,29 @@ def index():
 
 @app.route("/api/vehicles")
 def api_vehicles():
-    """All vehicles with current GPS positions."""
+    """All vehicles with current GPS positions (cached, 2 API calls max)."""
+    cache_key = "api_vehicles"
+    _cache_force(cache_key)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
     try:
-        client = _get_client()
-        vehicles = client.get_vehicles(limit=500)
-
-        # Enrich with live locations
-        for v in vehicles:
-            try:
-                loc = client.get_vehicle_location(v["id"])
-                v["latitude"] = loc.get("latitude")
-                v["longitude"] = loc.get("longitude")
-                v["speed"] = loc.get("speed")
-                v["bearing"] = loc.get("bearing")
-                v["lastUpdated"] = loc.get("dateTime")
-                v["isCommunicating"] = loc.get("isDeviceCommunicating")
-            except Exception:
-                v["latitude"] = None
-                v["longitude"] = None
-        return jsonify({"count": len(vehicles), "vehicles": vehicles})
+        vehicles = _fetch_vehicles_with_locations()
+        result = {"count": len(vehicles), "vehicles": vehicles}
+        _cache_set(cache_key, result, "vehicles")
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/vehicle/<device_id>/location")
 def api_vehicle_location(device_id: str):
-    """Single vehicle real-time GPS."""
+    """Single vehicle real-time GPS (uses batch cache when available)."""
     try:
+        # Try batch cache first — avoids a per-vehicle API call
+        loc_map = _cache_get("locations")
+        if loc_map and device_id in loc_map:
+            return jsonify(loc_map[device_id])
         loc = _get_client().get_vehicle_location(device_id)
         return jsonify(loc)
     except Exception as e:
@@ -98,67 +162,107 @@ def api_vehicle_location(device_id: str):
 
 @app.route("/api/vehicle/<device_id>/trips")
 def api_vehicle_trips(device_id: str):
-    """Trip history with route points."""
+    """Trip history with route points (cached per vehicle+date range)."""
     from_date = request.args.get("from")
     to_date = request.args.get("to")
+    cache_key = f"trips_{device_id}_{from_date}_{to_date}"
+    _cache_force(cache_key)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
     try:
         trips = _get_client().get_trips(
             device_id=device_id, from_date=from_date, to_date=to_date, limit=50
         )
-        return jsonify({"count": len(trips), "trips": trips})
+        result = {"count": len(trips), "trips": trips}
+        _cache_set(cache_key, result, "trips")
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/zones")
 def api_zones():
-    """All geofence zones."""
+    """All geofence zones (cached)."""
+    cache_key = "api_zones"
+    _cache_force(cache_key)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
     try:
         zones = _get_client().get_zones(limit=500)
-        return jsonify({"count": len(zones), "zones": zones})
+        result = {"count": len(zones), "zones": zones}
+        _cache_set(cache_key, result, "zones")
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/faults")
 def api_faults():
-    """Active fault codes."""
+    """Active fault codes (cached, keyed by device filter)."""
     device_id = request.args.get("device_id")
+    cache_key = f"api_faults_{device_id or 'all'}"
+    _cache_force(cache_key)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
     try:
         faults = _get_client().get_faults(device_id=device_id, limit=100)
-        return jsonify({"count": len(faults), "faults": faults})
+        result = {"count": len(faults), "faults": faults}
+        _cache_set(cache_key, result, "faults")
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/status")
 def api_status():
-    """Connection status and fleet summary."""
+    """Connection status and fleet summary (cached, reuses vehicle/location cache)."""
+    cache_key = "api_status"
+    _cache_force(cache_key)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
     try:
         client = _get_client()
         conn = client.test_connection()
-        vehicles = client.get_vehicles(limit=1000)
-        faults = client.get_faults(limit=500)
 
-        # Count vehicles with active communication
-        communicating = 0
-        for v in vehicles[:50]:  # Check first 50 to avoid API rate limits
-            try:
-                loc = client.get_vehicle_location(v["id"])
-                if loc.get("isDeviceCommunicating"):
-                    communicating += 1
-            except Exception:
-                pass
+        # Reuse cached vehicles if available (avoids duplicate fetch)
+        vehicles = _cache_get("vehicles")
+        if vehicles is None:
+            vehicles = client.get_vehicles(limit=1000)
+            _cache_set("vehicles", vehicles, "vehicles")
 
-        return jsonify({
+        # Reuse cached faults
+        faults_result = _cache_get("api_faults_all")
+        if faults_result is None:
+            faults = client.get_faults(limit=500)
+            faults_result = {"count": len(faults), "faults": faults}
+            _cache_set("api_faults_all", faults_result, "faults")
+
+        # Count communicating from batch locations (1 API call, not 50)
+        loc_map = _cache_get("locations")
+        if loc_map is None:
+            loc_map = client.get_all_vehicle_locations()
+            _cache_set("locations", loc_map, "locations")
+
+        communicating = sum(
+            1 for v in vehicles
+            if loc_map.get(v["id"], {}).get("isDeviceCommunicating")
+        )
+
+        result = {
             "connected": conn.get("connected", False),
             "version": conn.get("version"),
             "fleet": {
                 "total_vehicles": len(vehicles),
                 "communicating": communicating,
-                "total_faults": len(faults),
+                "total_faults": faults_result["count"],
             },
-        })
+        }
+        _cache_set(cache_key, result, "status")
+        return jsonify(result)
     except Exception as e:
         return jsonify({"connected": False, "error": str(e)}), 500
 
@@ -194,7 +298,13 @@ def api_chat():
             "status": "ok",
         })
     except Exception as e:
-        return jsonify({"error": str(e), "status": "error"}), 500
+        err = str(e)
+        if "429" in err or "RESOURCE_EXHAUSTED" in err:
+            return jsonify({
+                "error": "Gemini AI is temporarily rate limited (free tier: 20 requests/day). Please try again in a few minutes.",
+                "status": "rate_limited",
+            }), 429
+        return jsonify({"error": err, "status": "error"}), 500
 
 
 @app.route("/api/chat/clear", methods=["POST"])

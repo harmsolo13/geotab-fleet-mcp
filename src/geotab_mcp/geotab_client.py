@@ -102,6 +102,29 @@ class GeotabClient:
             "activeFrom": str(d.get("activeFrom", "")),
         }
 
+    def get_all_vehicle_locations(self) -> dict[str, dict]:
+        """Batch-fetch GPS positions for ALL vehicles in one API call.
+
+        Returns a dict keyed by device ID for O(1) lookup.
+        """
+        statuses = self.api.get("DeviceStatusInfo")
+        result = {}
+        for s in statuses:
+            device = s.get("device")
+            device_id = device.get("id") if isinstance(device, dict) else device
+            if device_id:
+                result[device_id] = {
+                    "deviceId": device_id,
+                    "latitude": s.get("latitude"),
+                    "longitude": s.get("longitude"),
+                    "speed": s.get("speed"),
+                    "bearing": s.get("bearing"),
+                    "dateTime": str(s.get("dateTime", "")),
+                    "isDeviceCommunicating": s.get("isDeviceCommunicating"),
+                    "currentStateDuration": str(s.get("currentStateDuration", "")),
+                }
+        return result
+
     def get_vehicle_location(self, device_id: str) -> dict:
         """Get real-time GPS position for a vehicle via DeviceStatusInfo."""
         statuses = self.api.get(
