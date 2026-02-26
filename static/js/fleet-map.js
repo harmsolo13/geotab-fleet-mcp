@@ -263,6 +263,10 @@ function toggleViewLock() {
 }
 
 function toggleSoloMode() {
+    if (!soloMode && !selectedVehicle) {
+        showToast("Select a vehicle first, then enable Solo mode", "warning", 3000);
+        return;
+    }
     soloMode = !soloMode;
     const btn = document.getElementById("soloModeToggle");
     btn.classList.toggle("active", soloMode);
@@ -272,10 +276,13 @@ function toggleSoloMode() {
         for (const id in markers) {
             markers[id].map = id === selectedVehicle ? map : null;
         }
-        showToast("Solo view — showing selected vehicle only", "info", 2000);
+        const vName = vehicles.find(v => v.id === selectedVehicle)?.name || selectedVehicle;
+        btn.querySelector("span").textContent = "Solo: " + vName;
+        showToast("Solo view — " + vName, "info", 2000);
     } else {
         // Show all markers
         for (const id in markers) markers[id].map = map;
+        btn.querySelector("span").textContent = "Solo";
         showToast("Showing all vehicles", "info", 2000);
     }
 }
@@ -348,7 +355,10 @@ async function generateReport() {
             return;
         }
 
-        body.innerHTML = data.html || "<p>No report content generated.</p>";
+        // Strip markdown code fences if Gemini wrapped the HTML
+        let html = data.html || "<p>No report content generated.</p>";
+        html = html.replace(/^```html?\s*\n?/i, "").replace(/\n?```\s*$/g, "");
+        body.innerHTML = html;
         actions.style.display = "flex";
         showToast("Fleet report generated successfully", "success");
     } catch (err) {
@@ -898,6 +908,10 @@ function closeDetail() {
 
     // Restore all markers if solo mode was on
     if (soloMode) {
+        soloMode = false;
+        const soloBtn = document.getElementById("soloModeToggle");
+        soloBtn.classList.remove("active");
+        soloBtn.querySelector("span").textContent = "Solo";
         for (const id in markers) markers[id].map = map;
     }
 

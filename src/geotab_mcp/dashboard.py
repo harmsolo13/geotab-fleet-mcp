@@ -539,6 +539,9 @@ def api_report():
             )
             if ace_result.get("status") == "complete":
                 ace_insight = ace_result.get("answer", "")
+                # Strip markdown fences if Ace wraps its response
+                ace_insight = re.sub(r"^```\w*\s*\n?", "", ace_insight)
+                ace_insight = re.sub(r"\n?```\s*$", "", ace_insight)
         except Exception:
             ace_insight = ""
 
@@ -570,8 +573,11 @@ def api_report():
                 "Show a brief note that Ace AI insights will be available in the next report cycle.\n"
             )
 
+        from datetime import date as _date
+        today_str = _date.today().strftime("%B %d, %Y")
+
         prompt = (
-            "Generate a professional HTML executive fleet report. "
+            f"Generate a professional HTML executive fleet report. Today's date is {today_str}. "
             "Use the following structure with styled HTML (inline CSS, modern look, no external deps):\n"
             "1. Executive Summary (2-3 sentences)\n"
             "2. Fleet Overview (vehicle count, total distance, trips, driving hours)\n"
@@ -579,7 +585,8 @@ def api_report():
             "4. Anomalies & Concerns (high idle, faults, excessive speed)\n"
             + ace_instruction +
             "6. Recommendations (3-5 actionable items)\n\n"
-            "Use a clean, modern style. Return ONLY the HTML body content (no <html>/<head> tags). "
+            "Use a clean, modern style. Return ONLY raw HTML — no markdown, no ```html fences, "
+            "no <html>/<head> tags. Just the styled div content. "
             "Use colors: blue #4a9eff for headers, green #34d399 for positive, red #f87171 for alerts.\n"
             "Make section 5 (Ace AI) visually prominent — use a colored border-left or background card."
         )
