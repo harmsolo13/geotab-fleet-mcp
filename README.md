@@ -111,6 +111,13 @@ User ←→ Claude (MCP Client)
 - **Cross-endpoint cache sharing** — `/api/status` reuses vehicle/location/fault caches
 - **`?refresh=1`** query param to force-bypass any cache
 
+### API Call Tracker
+- **SQLite database** (`api_tracker.db`) logs every external API call (Geotab, Gemini, Ace)
+- Tracks service, method, status, response time (ms), errors, and cache hits
+- **`/api/tracker`** endpoint returns usage summary (grouped by service/status) + recent calls
+- Supports `?hours=N` and `?limit=N` query params for filtering
+- Essential for monitoring quota usage (e.g. Gemini free tier 20 req/day)
+
 ## MCP Tools (20)
 
 | Category | Tool | Description |
@@ -136,7 +143,7 @@ User ←→ Claude (MCP Client)
 | **Google Maps** | `geocode_address` | Convert address to GPS coordinates |
 | | `create_geofence_from_address` | One-shot geofence from street address |
 
-## Dashboard API Routes (16)
+## Dashboard API Routes (17)
 
 | Method | Route | Description |
 |--------|-------|-------------|
@@ -154,6 +161,7 @@ User ←→ Claude (MCP Client)
 | POST | `/api/ace` | Ask Geotab Ace AI a question |
 | POST | `/api/chat` | Gemini AI chat with function calling |
 | POST | `/api/chat/clear` | Clear chat session |
+| GET | `/api/tracker` | API call usage summary + recent calls |
 | GET | `/api/enrichment/status` | Check enrichment toggle state |
 | POST | `/api/enrichment/toggle` | Toggle vehicle enrichment on/off |
 
@@ -246,6 +254,7 @@ geotab-fleet-mcp/
 │   ├── geotab_client.py    # Geotab API wrapper + batch locations (528 lines)
 │   ├── gemini_client.py    # Gemini AI chat + function calling (493 lines)
 │   ├── enrichment.py       # SQLite vehicle enrichment layer (220 lines)
+│   ├── api_tracker.py      # SQLite API call tracker (100 lines)
 │   ├── data_connector.py   # OData v4 Data Connector client (178 lines)
 │   ├── cache.py            # DuckDB caching layer (142 lines)
 │   ├── google_maps.py      # Geocoding + geofence creation (133 lines)
@@ -256,12 +265,13 @@ geotab-fleet-mcp/
 │   ├── js/fleet-map.js     # Map, chat, replay, heatmap, controls (1291 lines)
 │   └── css/dashboard.css   # Dark/light theme, glass morphism (1401 lines)
 ├── fleet_enrichment.db     # SQLite enrichment data (50 vehicles)
+├── api_tracker.db          # SQLite API call log
 ├── README.md
 ├── PROMPTS.md              # AI prompts used during development
 └── pyproject.toml
 ```
 
-**Total: ~5,860 lines of code across 12 source files.**
+**Total: ~5,970 lines of code across 13 source files.**
 
 ## Demo Scenarios
 
