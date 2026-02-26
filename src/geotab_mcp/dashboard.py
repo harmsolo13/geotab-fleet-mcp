@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
+import random
 import re
 import sys
 import time
@@ -19,6 +21,8 @@ load_dotenv()
 from geotab_mcp.gemini_client import GeminiChat
 from geotab_mcp.geotab_client import GeotabClient
 from geotab_mcp import enrichment
+from geotab_mcp import api_tracker
+from geotab_mcp.utils import circle_points
 
 # Resolve paths for templates and static files
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -31,8 +35,12 @@ app = Flask(
     static_folder=str(_STATIC_DIR),
 )
 
-# Init enrichment DB on import
-enrichment.init_db()
+# Init databases on import
+try:
+    enrichment.init_db()
+except Exception as _e:
+    print(f"Warning: enrichment DB init failed: {_e}")
+api_tracker.init_db()
 
 # Shared Geotab client (lazy init)
 _client: GeotabClient | None = None
@@ -63,6 +71,14 @@ def _cache_get(key: str) -> object | None:
     """Return cached value if still valid, else None."""
     entry = _cache_store.get(key)
     if entry and entry[0] > time.monotonic():
+        # Determine service from cache key for tracking
+        if key.startswith("trips_") or key.startswith("replay_"):
+            svc, method = "geotab", key.split("_")[0]
+        elif key.startswith("api_"):
+            svc, method = "geotab", key.replace("api_", "")
+        else:
+            svc, method = "cache", key
+        api_tracker.log_call(svc, method, "success", 0, cached=True)
         return entry[1]
     return None
 
@@ -139,6 +155,17 @@ def index():
 def guide():
     """User guide page."""
     return render_template("guide.html")
+
+
+@app.route("/api/guide")
+def api_guide():
+    """Return guide main content as an HTML fragment for the slideout panel."""
+    html = render_template("guide.html")
+    # Extract content between <main ...> and </main>
+    match = re.search(r"<main[^>]*>(.*?)</main>", html, re.DOTALL)
+    if match:
+        return match.group(1)
+    return html
 
 
 # ── API Routes ───────────────────────────────────────────────────────────
@@ -306,15 +333,8 @@ def _parse_duration(value) -> float:
         return 0.0
 
 
-def _circle_points(lat: float, lng: float, radius_m: float = 200, n: int = 8) -> list[dict]:
-    """Generate n points forming a circle polygon around (lat, lng)."""
-    points = []
-    for i in range(n):
-        angle = 2 * math.pi * i / n
-        dlat = (radius_m / 111320) * math.cos(angle)
-        dlng = (radius_m / (111320 * math.cos(math.radians(lat)))) * math.sin(angle)
-        points.append({"x": lng + dlng, "y": lat + dlat})
-    return points
+# _circle_points is now in utils.py — alias for backward compat
+_circle_points = circle_points
 
 
 # ── Fleet KPI API ────────────────────────────────────────────────────
@@ -343,8 +363,8 @@ def api_fleet_kpis():
 
         # Sample trips from only 5 vehicles to stay within rate limits
         # (50 vehicles × get_trips = 50 API calls = instant rate limit hit)
-        import random
-        sample = random.sample(vehicles, min(5, len(vehicles)))
+        # Deterministic: sort by ID and take first 5 so KPIs don't flicker
+        sample = sorted(vehicles, key=lambda v: v.get("id", ""))[:5]
         for v in sample:
             # Reuse per-vehicle trip cache if available
             trip_cache_key = f"trips_{v['id']}_None_None"
@@ -405,8 +425,8 @@ def api_heatmap_data():
     if cached is not None:
         return jsonify(cached)
     try:
-        import random
-        import hashlib
+        # NOTE: Heatmap data is synthetic — generated from vehicle positions
+        # with deterministic randomness for stable visualization across refreshes.
 
         # Use already-cached vehicle+location data (zero extra API calls)
         vehicles = _cache_get("api_vehicles")
@@ -499,13 +519,13 @@ def _build_fallback_report(report_data: dict, ace_insight: str) -> str:
             f"<td>{v['idle_hours']}h</td><td>{v['max_speed_kmh']} km/h</td></tr>"
         )
 
-    # Ace section
-    if ace_insight and "unavailable" not in ace_insight.lower():
+    # Ace section — show any real response prominently
+    if ace_insight and len(ace_insight.strip()) > 20:
         ace_html = (
-            '<div style="border-left:4px solid #a78bfa;background:rgba(167,139,250,0.08);'
+            '<div style="border-left:4px solid #a78bfa;background:rgba(167,139,250,0.12);'
             'padding:16px 20px;border-radius:0 8px 8px 0;margin:16px 0">'
             f'<h3 style="color:#a78bfa;margin:0 0 8px">Geotab Ace AI Analysis</h3>'
-            f'<div style="white-space:pre-wrap;color:#e8ecf4">{ace_insight}</div></div>'
+            f'<div style="white-space:pre-wrap;color:inherit;font-size:14px;line-height:1.6">{ace_insight}</div></div>'
         )
     else:
         ace_html = (
@@ -581,8 +601,7 @@ def api_report():
 
         # Gather trip summaries per vehicle (sample 5 to respect rate limits)
         vehicle_summaries = []
-        import random
-        sample = random.sample(vehicles, min(5, len(vehicles)))
+        sample = sorted(vehicles, key=lambda v: v.get("id", ""))[:5]
         for v in sample:
             trip_cache_key = f"trips_{v['id']}_None_None"
             trips_data = _cache_get(trip_cache_key)
@@ -650,12 +669,16 @@ def api_report():
         from geotab_mcp.gemini_client import GeminiClient
         gemini = GeminiClient()
 
-        # Build Ace section instruction based on whether we got a real response
-        if ace_insight and "unavailable" not in ace_insight.lower():
+        # Build Ace section instruction — any real Ace response gets prominent treatment
+        ace_has_content = bool(ace_insight and len(ace_insight.strip()) > 20)
+        if ace_has_content:
             ace_instruction = (
                 "5. **Geotab Ace AI Analysis** — This is CRITICAL. Display the following Ace AI analysis "
-                "VERBATIM in a styled blockquote or card with a distinct background. "
-                "Do NOT summarize or skip it. Show the full text:\n"
+                "VERBATIM in a styled card. Use: border-left:4px solid #a78bfa, "
+                "background:rgba(167,139,250,0.12), padding:16px 20px, color:inherit (NOT a light color — "
+                "the page may be in light mode). "
+                "The heading should be color:#a78bfa. Do NOT summarize, rephrase, or skip any part. "
+                "Show the FULL text exactly as provided:\n"
                 f"---\n{ace_insight}\n---\n"
             )
         else:
@@ -798,6 +821,19 @@ def api_chat_clear():
     if session_id in _chat_sessions:
         del _chat_sessions[session_id]
     return jsonify({"status": "cleared", "session_id": session_id})
+
+
+# ── API Tracker ──────────────────────────────────────────────────────────
+
+@app.route("/api/tracker")
+def api_tracker_view():
+    """API call usage summary and recent calls."""
+    hours = int(request.args.get("hours", 24))
+    limit = int(request.args.get("limit", 50))
+    return jsonify({
+        "summary": api_tracker.get_summary(hours=hours),
+        "recent": api_tracker.get_recent(limit=limit),
+    })
 
 
 # ── Enrichment Toggle API ────────────────────────────────────────────────
