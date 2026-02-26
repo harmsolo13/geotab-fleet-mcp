@@ -35,9 +35,26 @@ let replayPlaying = false;
 let replayTimer = null;
 let replaySpeedMs = 200; // ms between frames
 
+// Pre-computed replay HUD arrays (populated in startTripReplay)
+let replayCumDist = [];   // cumulative distance in metres at each point
+let replayMaxSpeed = [];  // max speed seen up to each point
+let replayAvgSpeed = [];  // average non-zero speed up to each point
+
 const REFRESH_INTERVAL = 10000; // 10 seconds
 const DEFAULT_CENTER = { lat: 43.6532, lng: -79.3832 }; // Toronto (Geotab HQ)
 const DEFAULT_ZOOM = 12;
+
+// ── XSS Protection ──────────────────────────────────────────────────────
+
+function escapeHTML(str) {
+    if (str == null) return "";
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
 
 // Map styling — dark theme
 const MAP_STYLES_DARK = [
@@ -328,15 +345,59 @@ function showToast(message, type = "info", duration = 4000) {
 }
 
 
-// ── Fleet Report ───────────────────────────────────────────────────────
+// ── Slideout Panel (Report + Guide) ──────────────────────────────────
+
+let slideoutOpen = false;
+let slideoutCurrentTab = "report"; // "report" or "guide"
+let slideoutReportHTML = null;     // cached report HTML
+let slideoutGuideHTML = null;      // cached guide HTML
+
+function openSlideout(tab = "report") {
+    const panel = document.getElementById("slideoutPanel");
+    slideoutOpen = true;
+    // Remove hidden first to allow transition
+    panel.classList.remove("hidden");
+    switchSlideoutTab(tab);
+}
+
+function closeSlideout() {
+    const panel = document.getElementById("slideoutPanel");
+    slideoutOpen = false;
+    panel.classList.add("hidden");
+    document.getElementById("slideoutActions").style.display = "none";
+}
+
+function switchSlideoutTab(tab) {
+    slideoutCurrentTab = tab;
+    // Update tab active states
+    document.getElementById("slideoutTabReport").classList.toggle("active", tab === "report");
+    document.getElementById("slideoutTabGuide").classList.toggle("active", tab === "guide");
+
+    // Show/hide report actions (only for report tab)
+    const actions = document.getElementById("slideoutActions");
+
+    if (tab === "report") {
+        if (slideoutReportHTML) {
+            document.getElementById("slideoutBody").innerHTML = slideoutReportHTML;
+            actions.style.display = "flex";
+        } else {
+            generateReport();
+        }
+    } else if (tab === "guide") {
+        actions.style.display = "none";
+        if (slideoutGuideHTML) {
+            document.getElementById("slideoutBody").innerHTML = slideoutGuideHTML;
+        } else {
+            loadGuideContent();
+        }
+    }
+}
 
 async function generateReport() {
-    const modal = document.getElementById("reportModal");
-    const body = document.getElementById("reportBody");
+    const body = document.getElementById("slideoutBody");
     const btn = document.getElementById("reportBtn");
-    const actions = document.getElementById("reportActions");
+    const actions = document.getElementById("slideoutActions");
 
-    modal.classList.remove("hidden");
     actions.style.display = "none";
     body.innerHTML = '<div class="report-loading"><div class="report-spinner"></div><p>Generating executive report...<br><small>Querying Ace AI + Gemini (may take 30-60s)</small></p></div>';
     btn.classList.add("loading");
@@ -350,15 +411,15 @@ async function generateReport() {
         btn.classList.remove("loading");
 
         if (data.error) {
-            body.innerHTML = `<div class="report-error">Error: ${data.error}</div>`;
+            body.innerHTML = `<div class="report-error">Error: ${escapeHTML(data.error)}</div>`;
             showToast("Report generation failed", "error");
             return;
         }
 
-        // Strip markdown code fences if Gemini wrapped the HTML
         let html = data.html || "<p>No report content generated.</p>";
         html = html.replace(/^```html?\s*\n?/i, "").replace(/\n?```\s*$/g, "");
         body.innerHTML = html;
+        slideoutReportHTML = html;
         actions.style.display = "flex";
         if (data.source === "fallback") {
             showToast("Report generated from cached data (AI unavailable)", "warning");
@@ -367,18 +428,42 @@ async function generateReport() {
         }
     } catch (err) {
         btn.classList.remove("loading");
-        body.innerHTML = `<div class="report-error">Failed to reach server: ${err.message}</div>`;
+        body.innerHTML = `<div class="report-error">Failed to reach server: ${escapeHTML(err.message)}</div>`;
         showToast("Report generation failed", "error");
     }
 }
 
-function closeReport() {
-    document.getElementById("reportModal").classList.add("hidden");
-    document.getElementById("reportActions").style.display = "none";
+async function loadGuideContent() {
+    const body = document.getElementById("slideoutBody");
+    body.innerHTML = '<div class="report-loading"><div class="report-spinner"></div><p>Loading guide...</p></div>';
+
+    try {
+        const resp = await fetch("/api/guide");
+        const html = await resp.text();
+        body.innerHTML = `<div class="guide-content">${html}</div>`;
+        slideoutGuideHTML = `<div class="guide-content">${html}</div>`;
+    } catch (err) {
+        body.innerHTML = `<div class="report-error">Failed to load guide: ${escapeHTML(err.message)}</div>`;
+    }
+}
+
+function popOutSlideout() {
+    if (slideoutCurrentTab === "report") {
+        if (slideoutReportHTML) {
+            const html = _getReportHTML();
+            const win = window.open("", "_blank");
+            win.document.write(html);
+            win.document.close();
+        } else {
+            showToast("Generate a report first", "warning");
+        }
+    } else {
+        window.open("/guide", "_blank");
+    }
 }
 
 function _getReportHTML() {
-    const content = document.getElementById("reportBody").innerHTML;
+    const content = slideoutReportHTML || document.getElementById("slideoutBody").innerHTML;
     const timestamp = new Date().toLocaleString();
     return `<!DOCTYPE html>
 <html lang="en">
@@ -415,15 +500,11 @@ function exportReportHTML() {
 }
 
 function exportReportPDF() {
-    // Open a print-friendly window and trigger print-to-PDF
     const html = _getReportHTML();
     const win = window.open("", "_blank");
     win.document.write(html);
     win.document.close();
-    // Small delay for rendering before triggering print
-    setTimeout(() => {
-        win.print();
-    }, 400);
+    setTimeout(() => win.print(), 400);
     showToast("Print dialog opened — choose 'Save as PDF'", "info");
 }
 
@@ -432,9 +513,7 @@ function printReport() {
     const win = window.open("", "_blank");
     win.document.write(html);
     win.document.close();
-    setTimeout(() => {
-        win.print();
-    }, 400);
+    setTimeout(() => win.print(), 400);
 }
 
 
@@ -460,6 +539,26 @@ async function startTripReplay(deviceId, fromDate, toDate) {
 
         replayPoints = data.points;
         replayIndex = 0;
+
+        // Pre-compute cumulative arrays for O(1) HUD updates
+        replayCumDist = new Array(replayPoints.length);
+        replayMaxSpeed = new Array(replayPoints.length);
+        replayAvgSpeed = new Array(replayPoints.length);
+        replayCumDist[0] = 0;
+        replayMaxSpeed[0] = replayPoints[0].speed || 0;
+        let _spdSum = replayMaxSpeed[0] > 0 ? replayMaxSpeed[0] : 0;
+        let _spdCount = replayMaxSpeed[0] > 0 ? 1 : 0;
+        replayAvgSpeed[0] = _spdCount > 0 ? _spdSum / _spdCount : 0;
+        for (let i = 1; i < replayPoints.length; i++) {
+            const spd = replayPoints[i].speed || 0;
+            replayCumDist[i] = replayCumDist[i - 1] + haversine(
+                replayPoints[i - 1].lat, replayPoints[i - 1].lng,
+                replayPoints[i].lat, replayPoints[i].lng
+            );
+            replayMaxSpeed[i] = Math.max(replayMaxSpeed[i - 1], spd);
+            if (spd > 0) { _spdSum += spd; _spdCount++; }
+            replayAvgSpeed[i] = _spdCount > 0 ? _spdSum / _spdCount : 0;
+        }
 
         // Draw speed-colored path segments
         replayPolyline = [];
@@ -593,12 +692,10 @@ function updateReplayHUD(index) {
     const elapsedMin = Math.floor(elapsedMs / 60000);
     const elapsedSec = Math.floor((elapsedMs % 60000) / 1000);
 
-    // Distance traveled (cumulative from point 0 to current)
-    let distM = 0;
-    for (let i = 1; i <= index; i++) {
-        distM += haversine(replayPoints[i - 1].lat, replayPoints[i - 1].lng, replayPoints[i].lat, replayPoints[i].lng);
-    }
-    const distKm = (distM / 1000).toFixed(2);
+    // O(1) lookups from pre-computed arrays
+    const distKm = (replayCumDist[index] / 1000).toFixed(2);
+    const maxSpd = replayMaxSpeed[index];
+    const avgSpd = replayAvgSpeed[index] > 0 ? replayAvgSpeed[index].toFixed(0) : "0";
 
     // Acceleration (speed delta vs previous point)
     let accel = 0;
@@ -608,19 +705,6 @@ function updateReplayHUD(index) {
         const dtSec = (curTime - prevTime) / 1000;
         if (dtSec > 0) accel = ((speed - prevSpeed) / 3.6) / dtSec; // m/s²
     }
-
-    // Max speed up to this point
-    let maxSpd = 0;
-    for (let i = 0; i <= index; i++) {
-        if ((replayPoints[i].speed || 0) > maxSpd) maxSpd = replayPoints[i].speed;
-    }
-
-    // Average speed (non-zero points only)
-    let spdSum = 0, spdCount = 0;
-    for (let i = 0; i <= index; i++) {
-        if ((replayPoints[i].speed || 0) > 0) { spdSum += replayPoints[i].speed; spdCount++; }
-    }
-    const avgSpd = spdCount > 0 ? (spdSum / spdCount).toFixed(0) : "0";
 
     // Timestamp display
     const timeStr = formatDateTime(pt.dateTime);
@@ -667,6 +751,9 @@ function closeReplay() {
     pauseReplay();
     replayPoints = [];
     replayIndex = 0;
+    replayCumDist = [];
+    replayMaxSpeed = [];
+    replayAvgSpeed = [];
     if (replayMarker) { replayMarker.map = null; replayMarker = null; }
     if (Array.isArray(replayPolyline)) {
         replayPolyline.forEach(seg => seg.setMap(null));
@@ -716,7 +803,7 @@ function updateMarkers() {
             const el = markers[v.id].content;
             if (el) {
                 el.className = `map-marker ${status}`;
-                el.querySelector(".marker-label").textContent = v.name || v.id;
+                el.querySelector(".marker-label").textContent = v.name || v.id; // textContent is XSS-safe
             }
         } else {
             // Create new marker
@@ -793,24 +880,16 @@ function drawTrips(trips) {
     tripPolylines = [];
 
     trips.forEach(trip => {
-        const points = [];
-        // Trips have stopPoint — draw point-to-point lines
+        // Trips have stopPoint — draw point markers using AdvancedMarkerElement
         if (trip.stopPoint && trip.stopPoint.x != null) {
-            points.push({ lat: trip.stopPoint.y, lng: trip.stopPoint.x });
-        }
-
-        if (points.length > 0) {
-            const marker = new google.maps.Marker({
+            const pos = { lat: trip.stopPoint.y, lng: trip.stopPoint.x };
+            const el = document.createElement("div");
+            el.style.cssText = "width:10px;height:10px;border-radius:50%;background:#4a9eff;border:2px solid #fff;box-shadow:0 0 4px rgba(74,158,255,0.6)";
+            el.title = `Trip end: ${trip.stop || ""}`;
+            const marker = new google.maps.marker.AdvancedMarkerElement({
                 map: map,
-                position: points[0],
-                icon: {
-                    path: google.maps.SymbolPath.CIRCLE,
-                    scale: 5,
-                    fillColor: "#4a9eff",
-                    fillOpacity: 0.8,
-                    strokeColor: "#4a9eff",
-                    strokeWeight: 1,
-                },
+                position: pos,
+                content: el,
                 title: `Trip end: ${trip.stop || ""}`,
             });
             tripPolylines.push(marker);
@@ -856,31 +935,31 @@ async function selectVehicle(deviceId) {
     const statusColor = { moving: "#34d399", stopped: "#8892a8", fault: "#f87171", offline: "#5a6478" }[status] || "#8892a8";
 
     let html = `
-        <h2>${vehicle.name || vehicle.id}</h2>
+        <h2>${escapeHTML(vehicle.name || vehicle.id)}</h2>
         <p class="detail-subtitle" style="color: ${statusColor}">${statusLabel}
             ${vehicle.speed ? ` &mdash; ${vehicle.speed.toFixed(1)} km/h` : ""}
         </p>
 
-        ${vehicle.driver_name ? `<div class="detail-row"><span class="label">Driver</span><span class="value">${vehicle.driver_name}</span></div>` : ""}
-        ${vehicle.department ? `<div class="detail-row"><span class="label">Department</span><span class="value">${vehicle.department}</span></div>` : ""}
-        <div class="detail-row"><span class="label">Make/Model</span><span class="value">${[vehicle.make, vehicle.model].filter(Boolean).join(" ") || "N/A"}</span></div>
-        <div class="detail-row"><span class="label">Year</span><span class="value">${vehicle.year || "N/A"}</span></div>
-        ${vehicle.vehicle_type ? `<div class="detail-row"><span class="label">Type</span><span class="value">${vehicle.vehicle_type}</span></div>` : ""}
-        ${vehicle.color ? `<div class="detail-row"><span class="label">Color</span><span class="value">${vehicle.color}</span></div>` : ""}
-        ${vehicle.fuel_type ? `<div class="detail-row"><span class="label">Fuel</span><span class="value">${vehicle.fuel_type}</span></div>` : ""}
-        <div class="detail-row"><span class="label">VIN</span><span class="value">${vehicle.vin || "N/A"}</span></div>
+        ${vehicle.driver_name ? `<div class="detail-row"><span class="label">Driver</span><span class="value">${escapeHTML(vehicle.driver_name)}</span></div>` : ""}
+        ${vehicle.department ? `<div class="detail-row"><span class="label">Department</span><span class="value">${escapeHTML(vehicle.department)}</span></div>` : ""}
+        <div class="detail-row"><span class="label">Make/Model</span><span class="value">${escapeHTML([vehicle.make, vehicle.model].filter(Boolean).join(" ") || "N/A")}</span></div>
+        <div class="detail-row"><span class="label">Year</span><span class="value">${escapeHTML(vehicle.year || "N/A")}</span></div>
+        ${vehicle.vehicle_type ? `<div class="detail-row"><span class="label">Type</span><span class="value">${escapeHTML(vehicle.vehicle_type)}</span></div>` : ""}
+        ${vehicle.color ? `<div class="detail-row"><span class="label">Color</span><span class="value">${escapeHTML(vehicle.color)}</span></div>` : ""}
+        ${vehicle.fuel_type ? `<div class="detail-row"><span class="label">Fuel</span><span class="value">${escapeHTML(vehicle.fuel_type)}</span></div>` : ""}
+        <div class="detail-row"><span class="label">VIN</span><span class="value">${escapeHTML(vehicle.vin || "N/A")}</span></div>
         <div class="detail-row"><span class="label">Odometer</span><span class="value">${vehicle.odometer ? Math.round(vehicle.odometer).toLocaleString() + " km" : "N/A"}</span></div>
         <div class="detail-row"><span class="label">Engine Hours</span><span class="value">${vehicle.engineHours ? Math.round(vehicle.engineHours).toLocaleString() + " h" : "N/A"}</span></div>
         <div class="detail-row"><span class="label">Lat / Lng</span><span class="value">${vehicle.latitude?.toFixed(4) || "?"}, ${vehicle.longitude?.toFixed(4) || "?"}</span></div>
-        <div class="detail-row"><span class="label">Device ID</span><span class="value" style="font-size:11px;opacity:0.6">${vehicle.id}</span></div>
+        <div class="detail-row"><span class="label">Device ID</span><span class="value" style="font-size:11px;opacity:0.6">${escapeHTML(vehicle.id)}</span></div>
     `;
 
     if (deviceFaults.length > 0) {
         html += `<p class="detail-section-title">Active Faults (${deviceFaults.length})</p>`;
         deviceFaults.slice(0, 5).forEach(f => {
             html += `<div class="fault-item">
-                <span class="fault-device">${f.diagnosticName || f.diagnosticId || "Unknown"}</span>
-                <div class="fault-desc">${f.failureMode || ""} &mdash; ${f.dateTime || ""}</div>
+                <span class="fault-device">${escapeHTML(f.diagnosticName || f.diagnosticId || "Unknown")}</span>
+                <div class="fault-desc">${escapeHTML(f.failureMode || "")} &mdash; ${escapeHTML(f.dateTime || "")}</div>
             </div>`;
         });
     }
@@ -942,6 +1021,21 @@ function updateVehicleList() {
         || (v.make || "").toLowerCase().includes(search)
     );
 
+    // Filter map markers to match search (dim non-matching)
+    if (search && map) {
+        const matchIds = new Set(filtered.map(v => v.id));
+        for (const id in markers) {
+            const el = markers[id].content;
+            if (el) el.style.opacity = matchIds.has(id) ? "1" : "0.25";
+        }
+    } else {
+        // Reset all markers to full opacity
+        for (const id in markers) {
+            const el = markers[id].content;
+            if (el) el.style.opacity = "1";
+        }
+    }
+
     if (filtered.length === 0) {
         list.innerHTML = '<div class="loading">No vehicles found</div>';
         return;
@@ -950,15 +1044,16 @@ function updateVehicleList() {
     list.innerHTML = filtered.map(v => {
         const status = getVehicleStatus(v);
         const speed = v.speed ? `${v.speed.toFixed(0)} km/h` : "";
-        const meta = [v.make, v.model].filter(Boolean).join(" ") || v.vin || v.id;
-        const driverLine = v.driver_name ? `<div class="vehicle-driver">${v.driver_name}${v.department ? ` · ${v.department}` : ""}</div>` : "";
+        const meta = escapeHTML([v.make, v.model].filter(Boolean).join(" ") || v.vin || v.id);
+        const driverLine = v.driver_name ? `<div class="vehicle-driver">${escapeHTML(v.driver_name)}${v.department ? ` · ${escapeHTML(v.department)}` : ""}</div>` : "";
+        const eid = escapeHTML(v.id);
         return `
             <div class="vehicle-item ${selectedVehicle === v.id ? "selected" : ""}"
-                 data-id="${v.id}"
-                 onclick="selectVehicle('${v.id}')">
+                 data-id="${eid}"
+                 onclick="selectVehicle('${eid}')">
                 <span class="vehicle-dot ${status}"></span>
                 <div class="vehicle-info">
-                    <div class="vehicle-name">${v.name || v.id}</div>
+                    <div class="vehicle-name">${escapeHTML(v.name || v.id)}</div>
                     <div class="vehicle-meta">${meta}</div>
                     ${driverLine}
                 </div>
@@ -977,8 +1072,8 @@ function updateFaultList() {
 
     list.innerHTML = faults.slice(0, 20).map(f => `
         <div class="fault-item">
-            <span class="fault-device">${f.deviceId || "Unknown"}</span>
-            <div class="fault-desc">${f.diagnosticName || f.diagnosticId || "Unknown"} &mdash; ${f.failureMode || ""}</div>
+            <span class="fault-device">${escapeHTML(f.deviceId || "Unknown")}</span>
+            <div class="fault-desc">${escapeHTML(f.diagnosticName || f.diagnosticId || "Unknown")} &mdash; ${escapeHTML(f.failureMode || "")}</div>
         </div>
     `).join("");
 }
@@ -1097,8 +1192,46 @@ async function sendMessage() {
 
     input.value = "";
     appendMessage("user", message);
+
+    // ── Local chat commands (intercepted before hitting the API) ──
+    const lower = message.toLowerCase().replace(/[^a-z0-9 ]/g, "");
+
+    if (lower === "help" || lower === "commands" || lower === "what can you do") {
+        appendMessage("assistant",
+            "**Quick Commands** (handled instantly)\n\n" +
+            "**help** — Show this reference\n" +
+            "**play the demo** — Launch a 3-minute guided tour\n" +
+            "**stop demo** — Stop the demo\n\n" +
+            "**AI Questions** (powered by Gemini + Geotab)\n\n" +
+            "\"Which vehicles are moving right now?\"\n" +
+            "\"Show me trips for Vehicle 5\"\n" +
+            "\"How many faults are active?\"\n" +
+            "\"Summarise today's fleet activity\"\n\n" +
+            "**Action Commands** (AI executes via Geotab API)\n\n" +
+            "\"Create a geofence around downtown Toronto\"\n" +
+            "\"Send a message to Vehicle 12\"\n\n" +
+            "You can type or use the mic button to speak."
+        );
+        return;
+    }
+    if (lower.includes("play") && lower.includes("demo") || lower === "demo" || lower === "start demo" || lower === "run demo") {
+        appendMessage("assistant", "Starting the Fleet Command Center demo. Sit back and enjoy the tour!");
+        speakResponse("Starting the Fleet Command Center demo. Sit back and enjoy the tour!");
+        setTimeout(() => runDemo(), 1500);
+        return;
+    }
+    if (lower === "stop demo" || lower === "end demo") {
+        stopDemo();
+        appendMessage("assistant", "Demo stopped.");
+        return;
+    }
+
     setTypingIndicator(true);
     chatSending = true;
+
+    // Visual disabled state on send button
+    const sendBtn = document.getElementById("sendBtn");
+    if (sendBtn) { sendBtn.disabled = true; sendBtn.style.opacity = "0.4"; }
 
     try {
         const resp = await fetch("/api/chat", {
@@ -1110,7 +1243,7 @@ async function sendMessage() {
         setTypingIndicator(false);
 
         if (data.error) {
-            appendMessage("error", "Error: " + data.error);
+            appendMessage("error", "Error: " + escapeHTML(data.error));
         } else {
             appendMessage("assistant", data.response);
             // Update session ID if server assigned one
@@ -1132,6 +1265,8 @@ async function sendMessage() {
         appendMessage("error", "Failed to reach the server. Please try again.");
     } finally {
         chatSending = false;
+        const sendBtn = document.getElementById("sendBtn");
+        if (sendBtn) { sendBtn.disabled = false; sendBtn.style.opacity = "1"; }
     }
 }
 
@@ -1140,7 +1275,7 @@ async function clearChat() {
     // Keep only the welcome message
     container.innerHTML = `
         <div class="chat-bubble assistant">
-            <p>Hi! I'm your fleet assistant. Ask me anything about your vehicles, trips, faults, drivers, or zones. You can also use the mic button to speak.</p>
+            <p>Hi! I'm your fleet assistant. Ask me anything about your vehicles, trips, faults, drivers, or zones. You can also use the mic button to speak. Say "play the demo" for a guided tour!</p>
         </div>
     `;
 

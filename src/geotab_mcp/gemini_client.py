@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 from datetime import date
 
 from google import genai
 from google.genai import types as genai_types
+
+from geotab_mcp import api_tracker
+from geotab_mcp.utils import circle_points
 
 SYSTEM_PROMPT = (
     "You are an expert fleet management analyst working with Geotab telematics data. "
@@ -244,6 +246,7 @@ class GeminiClient:
         import time as _time
         for attempt in range(3):
             try:
+                t0 = _time.monotonic()
                 response = self._client.models.generate_content(
                     model=self._model,
                     contents=user_msg,
@@ -253,6 +256,8 @@ class GeminiClient:
                         max_output_tokens=8192,
                     ),
                 )
+                ms = int((_time.monotonic() - t0) * 1000)
+                api_tracker.log_call("gemini", "analyze_fleet", "success", ms)
                 return {
                     "analysis": response.text,
                     "model": self._model,
@@ -260,6 +265,8 @@ class GeminiClient:
                     "status": "success",
                 }
             except Exception as e:
+                ms = int((_time.monotonic() - t0) * 1000)
+                api_tracker.log_call("gemini", "analyze_fleet", "error", ms, error=str(e))
                 if "429" in str(e) and attempt < 2:
                     _time.sleep(4 * (attempt + 1))
                     continue
@@ -284,6 +291,8 @@ class GeminiClient:
         )
 
         try:
+            import time as _time
+            t0 = _time.monotonic()
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=user_msg,
@@ -293,12 +302,16 @@ class GeminiClient:
                     max_output_tokens=512,
                 ),
             )
+            ms = int((_time.monotonic() - t0) * 1000)
+            api_tracker.log_call("gemini", "summarize_fleet", "success", ms)
             return {
                 "summary": response.text,
                 "model": self._model,
                 "status": "success",
             }
         except Exception as e:
+            ms = int((_time.monotonic() - t0) * 1000)
+            api_tracker.log_call("gemini", "summarize_fleet", "error", ms, error=str(e))
             return {
                 "error": str(e),
                 "model": self._model,
@@ -327,13 +340,7 @@ class GeminiChat:
         lat = args["latitude"]
         lng = args["longitude"]
         radius = args.get("radius_m", 200)
-        n = 8
-        points = []
-        for i in range(n):
-            angle = 2 * math.pi * i / n
-            dlat = (radius / 111320) * math.cos(angle)
-            dlng = (radius / (111320 * math.cos(math.radians(lat)))) * math.sin(angle)
-            points.append({"x": lng + dlng, "y": lat + dlat})
+        points = circle_points(lat, lng, radius_m=radius)
 
         zone_id = self._geotab.create_zone(
             name=args["name"],
@@ -350,13 +357,24 @@ class GeminiChat:
         }
 
     def _truncate(self, data: list | dict) -> list | dict:
-        """Truncate large results to fit within Gemini context."""
+        """Truncate large results to fit within Gemini context.
+
+        Truncates the Python list/dict *before* serializing to avoid
+        slicing JSON mid-string which would produce malformed data.
+        """
         if isinstance(data, list) and len(data) > self.MAX_ITEMS:
             data = data[: self.MAX_ITEMS]
-        serialized = json.dumps(data, default=str)
-        if len(serialized) > self.MAX_BYTES:
-            serialized = serialized[: self.MAX_BYTES] + '..."truncated"'
-            return json.loads(serialized + ("]" if isinstance(data, list) else "}"))
+        # Progressively trim list items until under byte limit
+        if isinstance(data, list):
+            while len(data) > 1 and len(json.dumps(data, default=str)) > self.MAX_BYTES:
+                data = data[: len(data) // 2]
+        elif isinstance(data, dict):
+            serialized = json.dumps(data, default=str)
+            if len(serialized) > self.MAX_BYTES:
+                # For dicts, trim list-valued fields first
+                for k, v in data.items():
+                    if isinstance(v, list) and len(v) > 5:
+                        data[k] = v[:5]
         return data
 
     def _execute_tool(self, name: str, args: dict):
@@ -451,6 +469,8 @@ class GeminiChat:
 
         # Function calling loop
         for _ in range(self.MAX_TOOL_ROUNDS):
+            import time as _time
+            t0 = _time.monotonic()
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=contents,
@@ -461,6 +481,8 @@ class GeminiChat:
                     tools=[self._tool_config],
                 ),
             )
+            ms = int((_time.monotonic() - t0) * 1000)
+            api_tracker.log_call("gemini", "chat", "success", ms)
 
             # Check if the response contains function calls
             candidate = response.candidates[0]

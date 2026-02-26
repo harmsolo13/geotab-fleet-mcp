@@ -29,6 +29,9 @@ env/
 .DS_Store
 Thumbs.db
 
+# SQLite databases
+*.db
+
 # Testing
 .pytest_cache/
 htmlcov/
