@@ -241,29 +241,34 @@ class GeminiClient:
             user_msg += f"Specific question: {question}\n\n"
         user_msg += f"Fleet data:\n```json\n{data_str}\n```"
 
-        try:
-            response = self._client.models.generate_content(
-                model=self._model,
-                contents=user_msg,
-                config=genai.types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    temperature=0.3,
-                    max_output_tokens=8192,
-                ),
-            )
-            return {
-                "analysis": response.text,
-                "model": self._model,
-                "analysis_type": analysis_type,
-                "status": "success",
-            }
-        except Exception as e:
-            return {
-                "error": str(e),
-                "model": self._model,
-                "analysis_type": analysis_type,
-                "status": "error",
-            }
+        import time as _time
+        for attempt in range(3):
+            try:
+                response = self._client.models.generate_content(
+                    model=self._model,
+                    contents=user_msg,
+                    config=genai.types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        temperature=0.3,
+                        max_output_tokens=8192,
+                    ),
+                )
+                return {
+                    "analysis": response.text,
+                    "model": self._model,
+                    "analysis_type": analysis_type,
+                    "status": "success",
+                }
+            except Exception as e:
+                if "429" in str(e) and attempt < 2:
+                    _time.sleep(4 * (attempt + 1))
+                    continue
+                return {
+                    "error": str(e),
+                    "model": self._model,
+                    "analysis_type": analysis_type,
+                    "status": "error",
+                }
 
     def summarize_fleet(self, data: str | dict | list) -> dict:
         """Quick fleet health summary."""
