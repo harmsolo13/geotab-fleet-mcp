@@ -137,6 +137,25 @@ _GEOTAB_TOOLS = [
             },
         },
     ),
+    genai_types.FunctionDeclaration(
+        name="ace_query",
+        description=(
+            "Ask Geotab Ace AI a natural language question about fleet data. "
+            "Ace is Geotab's built-in AI that can analyze fleet patterns, provide insights, "
+            "and answer complex questions using the full telematics dataset. "
+            "Use this for high-level fleet insights, trend analysis, or questions that "
+            "require deeper analysis than raw data queries. "
+            "Example questions: 'Which vehicles have the worst fuel efficiency?', "
+            "'What are the top safety concerns this week?', 'Summarize fleet utilization trends'."
+        ),
+        parameters={
+            "type": "OBJECT",
+            "properties": {
+                "question": {"type": "STRING", "description": "Natural language question to ask Geotab Ace AI"},
+            },
+            "required": ["question"],
+        },
+    ),
 ]
 
 ANALYSIS_PROMPTS = {
@@ -304,6 +323,10 @@ class GeminiChat:
                 to_date=a.get("to_date"),
                 device_id=a.get("device_id"),
                 limit=a.get("limit", 200),
+            ),
+            "ace_query": lambda a: self._geotab.ace_query(
+                question=a["question"],
+                timeout=a.get("timeout", 90),
             ),
         }
         fn = dispatch.get(name)
