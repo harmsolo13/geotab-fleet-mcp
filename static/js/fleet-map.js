@@ -352,6 +352,52 @@ let slideoutCurrentTab = "report"; // "report" or "guide"
 let slideoutReportHTML = null;     // cached report HTML
 let slideoutGuideHTML = null;      // cached guide HTML
 
+// ── Slideout Resize ──
+(function initSlideoutResize() {
+    const panel = document.getElementById("slideoutPanel");
+    const handle = document.getElementById("slideoutResizeHandle");
+    if (!handle || !panel) return;
+    let startX, startW;
+    handle.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        startX = e.clientX;
+        startW = panel.offsetWidth;
+        panel.classList.add("resizing");
+        document.addEventListener("mousemove", onDrag);
+        document.addEventListener("mouseup", onUp);
+    });
+    function onDrag(e) {
+        const w = startW + (startX - e.clientX);
+        const min = 320, max = window.innerWidth * 0.8;
+        panel.style.width = Math.max(min, Math.min(max, w)) + "px";
+    }
+    function onUp() {
+        panel.classList.remove("resizing");
+        document.removeEventListener("mousemove", onDrag);
+        document.removeEventListener("mouseup", onUp);
+    }
+    // Touch support
+    handle.addEventListener("touchstart", (e) => {
+        const t = e.touches[0];
+        startX = t.clientX;
+        startW = panel.offsetWidth;
+        panel.classList.add("resizing");
+        document.addEventListener("touchmove", onTouchDrag);
+        document.addEventListener("touchend", onTouchUp);
+    });
+    function onTouchDrag(e) {
+        const t = e.touches[0];
+        const w = startW + (startX - t.clientX);
+        const min = 320, max = window.innerWidth * 0.8;
+        panel.style.width = Math.max(min, Math.min(max, w)) + "px";
+    }
+    function onTouchUp() {
+        panel.classList.remove("resizing");
+        document.removeEventListener("touchmove", onTouchDrag);
+        document.removeEventListener("touchend", onTouchUp);
+    }
+})();
+
 function openSlideout(tab = "report") {
     const panel = document.getElementById("slideoutPanel");
     slideoutOpen = true;
@@ -439,9 +485,12 @@ async function loadGuideContent() {
 
     try {
         const resp = await fetch("/api/guide");
-        const html = await resp.text();
-        body.innerHTML = `<div class="guide-content">${html}</div>`;
-        slideoutGuideHTML = `<div class="guide-content">${html}</div>`;
+        let html = await resp.text();
+        // Prefix section IDs to avoid collisions with dashboard elements (e.g. id="map")
+        html = html.replace(/id="([^"]+)"/g, 'id="guide-$1"');
+        const content = `<div class="guide-content">${html}</div>`;
+        body.innerHTML = content;
+        slideoutGuideHTML = content;
     } catch (err) {
         body.innerHTML = `<div class="report-error">Failed to load guide: ${escapeHTML(err.message)}</div>`;
     }
@@ -1216,7 +1265,6 @@ async function sendMessage() {
     }
     if (lower.includes("play") && lower.includes("demo") || lower === "demo" || lower === "start demo" || lower === "run demo") {
         appendMessage("assistant", "Starting the Fleet Command Center demo. Sit back and enjoy the tour!");
-        speakResponse("Starting the Fleet Command Center demo. Sit back and enjoy the tour!");
         setTimeout(() => runDemo(), 1500);
         return;
     }

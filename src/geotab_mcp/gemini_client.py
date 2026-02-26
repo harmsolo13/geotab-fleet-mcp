@@ -28,6 +28,7 @@ CHAT_SYSTEM_PROMPT = (
     "Use these tools to answer questions about vehicles, trips, faults, drivers, zones, "
     "fuel transactions, and exception events. "
     "Be conversational and concise. Use specific numbers from the data. "
+    "Always use metric units — km, km/h, litres, hours. Never use miles, mph, or gallons. "
     "If a question is ambiguous, make reasonable assumptions and state them. "
     "Format responses for easy reading — use short paragraphs, not markdown headers."
 )
@@ -199,7 +200,7 @@ ANALYSIS_PROMPTS = {
     "efficiency": "Analyze fuel efficiency, idle time, and driving patterns. Identify the least efficient vehicles and suggest improvements.",
     "safety": "Evaluate driver safety scores, harsh events, speeding incidents, and rule violations. Flag high-risk drivers or vehicles.",
     "maintenance": "Review fault codes, diagnostic data, and vehicle health. Predict upcoming maintenance needs and prioritize urgent issues.",
-    "route_optimization": "Analyze trip routes, distances, durations, and stop patterns. Suggest route optimizations to reduce mileage and time.",
+    "route_optimization": "Analyze trip routes, distances, durations, and stop patterns. Suggest route optimizations to reduce distance (km) and time.",
     "cost": "Calculate fleet operating costs from fuel, maintenance, and utilization data. Identify cost reduction opportunities.",
     "general": "Provide a comprehensive fleet health overview covering efficiency, safety, maintenance, and utilization.",
 }
@@ -213,7 +214,7 @@ class GeminiClient:
         if not api_key:
             raise ValueError("GEMINI_API_KEY environment variable is required")
         self._client = genai.Client(api_key=api_key)
-        self._model = "gemini-2.5-flash"
+        self._model = "gemini-3-flash-preview"
 
     def analyze_fleet(
         self,
@@ -331,7 +332,7 @@ class GeminiChat:
         if not api_key:
             raise ValueError("GEMINI_API_KEY environment variable is required")
         self._client = genai.Client(api_key=api_key)
-        self._model = "gemini-2.5-flash"
+        self._model = "gemini-3-flash-preview"
         self._geotab = geotab_client
         self._tool_config = genai_types.Tool(function_declarations=_GEOTAB_TOOLS)
 
