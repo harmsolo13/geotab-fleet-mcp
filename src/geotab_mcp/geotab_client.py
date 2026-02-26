@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import mygeotab
 from mygeotab import AuthenticationException, MyGeotabException
 
@@ -14,6 +16,10 @@ class GeotabClient:
 
     def __init__(self) -> None:
         self._api: mygeotab.API | None = None
+        self._server: str = ""
+        self._database: str = ""
+        self._username: str = ""
+        self._session_id: str = ""
 
     @property
     def api(self) -> mygeotab.API:
@@ -23,29 +29,31 @@ class GeotabClient:
 
     def authenticate(self) -> dict:
         """Authenticate with MyGeotab using .env credentials."""
-        database = os.getenv("GEOTAB_DATABASE", "")
-        username = os.getenv("GEOTAB_USERNAME", "")
+        self._database = os.getenv("GEOTAB_DATABASE", "")
+        self._username = os.getenv("GEOTAB_USERNAME", "")
         password = os.getenv("GEOTAB_PASSWORD", "")
         server = os.getenv("GEOTAB_SERVER", "my.geotab.com")
 
-        if not all([database, username, password]):
+        if not all([self._database, self._username, password]):
             raise ValueError(
                 "Missing credentials. Set GEOTAB_DATABASE, GEOTAB_USERNAME, "
                 "and GEOTAB_PASSWORD environment variables."
             )
 
         self._api = mygeotab.API(
-            username=username,
+            username=self._username,
             password=password,
-            database=database,
+            database=self._database,
             server=server,
             timeout=60,
         )
         credentials = self._api.authenticate()
+        self._server = credentials.server
+        self._session_id = credentials.session_id
         return {
             "database": credentials.database,
             "server": credentials.server,
-            "username": username,
+            "username": self._username,
             "status": "authenticated",
         }
 
@@ -367,6 +375,101 @@ class GeotabClient:
         }
         msg_id = self.api.add("TextMessage", text_message)
         return msg_id
+
+
+    # ── Geotab Ace AI ────────────────────────────────────────────────
+
+    def _ace_call(self, function_name: str, function_params: dict | None = None) -> dict:
+        """Make a GetAceResults API call."""
+        base = f"https://{self._server}"
+        payload = {
+            "method": "GetAceResults",
+            "params": {
+                "serviceName": "dna-planet-orchestration",
+                "functionName": function_name,
+                "customerData": True,
+                "functionParameters": function_params or {},
+                "credentials": {
+                    "database": self._database,
+                    "sessionId": self._session_id,
+                    "userName": self._username,
+                },
+            },
+        }
+        resp = httpx.post(f"{base}/apiv1", json=payload, timeout=30)
+        data = resp.json()
+        if "error" in data:
+            raise RuntimeError(data["error"].get("message", str(data["error"])))
+        return data.get("result", {})
+
+    def ace_query(self, question: str, timeout: int = 120) -> dict:
+        """Ask Geotab Ace a natural language question about fleet data.
+
+        Uses the 3-step async pattern: create-chat -> send-prompt -> poll get-message-group.
+        """
+        try:
+            # Step 1: Create chat session
+            chat_result = self._ace_call("create-chat")
+            api_result = chat_result.get("apiResult", {})
+            results = api_result.get("results", [{}])
+            chat_id = results[0].get("chat_id") if results else None
+
+            if not chat_id:
+                return {"status": "error", "error": "Failed to create Ace chat session", "raw": chat_result}
+
+            # Step 2: Send prompt
+            time.sleep(1)
+            prompt_result = self._ace_call("send-prompt", {
+                "chat_id": chat_id,
+                "prompt": question,
+            })
+            api_result = prompt_result.get("apiResult", {})
+            results = api_result.get("results", [{}])
+            msg_group = results[0].get("message_group", {}) if results else {}
+            msg_group_id = msg_group.get("id")
+
+            if not msg_group_id:
+                return {"status": "error", "error": "Failed to send Ace prompt", "raw": prompt_result}
+
+            # Step 3: Poll for results
+            time.sleep(8)  # Ace needs time to process
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                poll_result = self._ace_call("get-message-group", {
+                    "chat_id": chat_id,
+                    "message_group_id": msg_group_id,
+                })
+                api_result = poll_result.get("apiResult", {})
+                results = api_result.get("results", [{}])
+                msg_group = results[0].get("message_group", {}) if results else {}
+                status = msg_group.get("status", {}).get("status", "").upper()
+
+                if status == "DONE":
+                    messages = msg_group.get("messages", {})
+                    answer_parts = []
+                    preview_data = []
+                    for msg in messages.values() if isinstance(messages, dict) else messages:
+                        if isinstance(msg, dict):
+                            if msg.get("reasoning"):
+                                answer_parts.append(msg["reasoning"])
+                            if msg.get("preview_array"):
+                                preview_data.extend(msg["preview_array"])
+                    return {
+                        "status": "complete",
+                        "answer": "\n\n".join(answer_parts) if answer_parts else "Ace returned data but no reasoning text.",
+                        "data": preview_data[:20] if preview_data else None,
+                        "chat_id": chat_id,
+                    }
+
+                if status in ("ERROR", "FAILED"):
+                    return {"status": "error", "error": msg_group.get("status", {}).get("message", "Ace query failed")}
+
+                time.sleep(5)
+
+            return {"status": "timeout", "error": f"Ace did not respond within {timeout}s"}
+
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
 
 
 def _safe_name(value) -> str | None:

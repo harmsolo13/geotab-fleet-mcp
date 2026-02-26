@@ -267,6 +267,26 @@ def api_status():
         return jsonify({"connected": False, "error": str(e)}), 500
 
 
+# ── Ace AI API ───────────────────────────────────────────────────────
+
+@app.route("/api/ace", methods=["POST"])
+def api_ace():
+    """Ask Geotab Ace AI a natural language question about fleet data.
+
+    Body: {"question": "Which vehicles have the worst fuel efficiency?"}
+    """
+    try:
+        body = request.get_json(force=True)
+        question = (body.get("question") or "").strip()
+        if not question:
+            return jsonify({"error": "Missing question"}), 400
+
+        result = _get_client().ace_query(question, timeout=90)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ── Chat API ─────────────────────────────────────────────────────────────
 
 @app.route("/api/chat", methods=["POST"])
