@@ -67,6 +67,11 @@ Resolution: Replaced semi-transparent background with fully opaque `--bg-panel`,
 ### Voice Input
 > "Add voice input to the chat using Web Speech API. Show interim transcription, auto-send on final result. Add TTS for short AI responses."
 
+## Phase 5: Observability
+
+### API Call Tracker
+> "We burned through the Gemini free tier (20 req/day) without knowing it. No API call logging exists anywhere. Need a SQLite tracker that records every external API call so we can see quota usage, debug failures, and monitor response times. New api_tracker.py with init_db, log_call, track context manager, get_summary, get_recent. Instrument geotab_client.py (13 methods), gemini_client.py (3 methods), and _ace_call. Log cache hits in dashboard.py. Add GET /api/tracker endpoint."
+
 ## Key Design Decisions Made via AI Prompts
 
 1. **Batch location fetching** instead of per-vehicle API calls — prompted by rate limit errors

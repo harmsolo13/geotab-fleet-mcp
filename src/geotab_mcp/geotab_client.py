@@ -10,6 +10,8 @@ import httpx
 import mygeotab
 from mygeotab import AuthenticationException, MyGeotabException
 
+from geotab_mcp import api_tracker
+
 
 class GeotabClient:
     """Wrapper around the mygeotab SDK for fleet data access."""
@@ -67,7 +69,8 @@ class GeotabClient:
 
     def get_vehicles(self, limit: int = 500) -> list[dict]:
         """Get all vehicles (Device objects) in the fleet."""
-        devices = self.api.get("Device", resultsLimit=limit)
+        with api_tracker.track("geotab", "get_vehicles"):
+            devices = self.api.get("Device", resultsLimit=limit)
         results = []
         for d in devices:
             results.append({
@@ -115,7 +118,8 @@ class GeotabClient:
 
         Returns a dict keyed by device ID for O(1) lookup.
         """
-        statuses = self.api.get("DeviceStatusInfo")
+        with api_tracker.track("geotab", "get_all_vehicle_locations"):
+            statuses = self.api.get("DeviceStatusInfo")
         result = {}
         for s in statuses:
             device = s.get("device")
@@ -135,10 +139,11 @@ class GeotabClient:
 
     def get_vehicle_location(self, device_id: str) -> dict:
         """Get real-time GPS position for a vehicle via DeviceStatusInfo."""
-        statuses = self.api.get(
-            "DeviceStatusInfo",
-            search={"deviceSearch": {"id": device_id}},
-        )
+        with api_tracker.track("geotab", "get_vehicle_location"):
+            statuses = self.api.get(
+                "DeviceStatusInfo",
+                search={"deviceSearch": {"id": device_id}},
+            )
         if not statuses:
             return {"error": f"No status info for device {device_id}"}
         s = statuses[0]
@@ -168,15 +173,16 @@ class GeotabClient:
         if to_date is None:
             to_date = now.isoformat()
 
-        trips = self.api.get(
-            "Trip",
-            search={
-                "deviceSearch": {"id": device_id},
-                "fromDate": from_date,
-                "toDate": to_date,
-            },
-            resultsLimit=limit,
-        )
+        with api_tracker.track("geotab", "get_trips"):
+            trips = self.api.get(
+                "Trip",
+                search={
+                    "deviceSearch": {"id": device_id},
+                    "fromDate": from_date,
+                    "toDate": to_date,
+                },
+                resultsLimit=limit,
+            )
         results = []
         for t in trips:
             results.append({
@@ -216,9 +222,10 @@ class GeotabClient:
         if device_id:
             search["deviceSearch"] = {"id": device_id}
 
-        transactions = self.api.get(
-            "FuelTransaction", search=search, resultsLimit=limit
-        )
+        with api_tracker.track("geotab", "get_fuel_transactions"):
+            transactions = self.api.get(
+                "FuelTransaction", search=search, resultsLimit=limit
+            )
         results = []
         for f in transactions:
             results.append({
@@ -253,7 +260,8 @@ class GeotabClient:
         if device_id:
             search["deviceSearch"] = {"id": device_id}
 
-        faults = self.api.get("FaultData", search=search, resultsLimit=limit)
+        with api_tracker.track("geotab", "get_faults"):
+            faults = self.api.get("FaultData", search=search, resultsLimit=limit)
         results = []
         for f in faults:
             diag = f.get("diagnostic")
@@ -273,7 +281,8 @@ class GeotabClient:
 
     def get_drivers(self, limit: int = 200) -> list[dict]:
         """Get all users flagged as drivers."""
-        users = self.api.get("User", search={"isDriver": True}, resultsLimit=limit)
+        with api_tracker.track("geotab", "get_drivers"):
+            users = self.api.get("User", search={"isDriver": True}, resultsLimit=limit)
         results = []
         for u in users:
             results.append({
@@ -291,7 +300,8 @@ class GeotabClient:
 
     def get_zones(self, limit: int = 200) -> list[dict]:
         """Get all geofence zones."""
-        zones = self.api.get("Zone", resultsLimit=limit)
+        with api_tracker.track("geotab", "get_zones"):
+            zones = self.api.get("Zone", resultsLimit=limit)
         results = []
         for z in zones:
             points = z.get("points", [])
@@ -325,9 +335,10 @@ class GeotabClient:
         if device_id:
             search["deviceSearch"] = {"id": device_id}
 
-        events = self.api.get(
-            "ExceptionEvent", search=search, resultsLimit=limit
-        )
+        with api_tracker.track("geotab", "get_exception_events"):
+            events = self.api.get(
+                "ExceptionEvent", search=search, resultsLimit=limit
+            )
         results = []
         for e in events:
             results.append({
@@ -360,7 +371,8 @@ class GeotabClient:
         if zone_types:
             zone["zoneTypes"] = [{"id": zt} for zt in zone_types]
 
-        zone_id = self.api.add("Zone", zone)
+        with api_tracker.track("geotab", "create_zone"):
+            zone_id = self.api.add("Zone", zone)
         return zone_id
 
     def send_text_message(self, device_id: str, message: str) -> str:
@@ -373,7 +385,8 @@ class GeotabClient:
             },
             "isDirectionToVehicle": True,
         }
-        msg_id = self.api.add("TextMessage", text_message)
+        with api_tracker.track("geotab", "send_text_message"):
+            msg_id = self.api.add("TextMessage", text_message)
         return msg_id
 
 
@@ -391,15 +404,16 @@ class GeotabClient:
         if to_date is None:
             to_date = now.isoformat()
 
-        records = self.api.get(
-            "LogRecord",
-            search={
-                "deviceSearch": {"id": device_id},
-                "fromDate": from_date,
-                "toDate": to_date,
-            },
-            resultsLimit=limit,
-        )
+        with api_tracker.track("geotab", "get_log_records"):
+            records = self.api.get(
+                "LogRecord",
+                search={
+                    "deviceSearch": {"id": device_id},
+                    "fromDate": from_date,
+                    "toDate": to_date,
+                },
+                resultsLimit=limit,
+            )
         results = []
         for r in records:
             lat = r.get("latitude")
@@ -432,11 +446,12 @@ class GeotabClient:
                 },
             },
         }
-        resp = httpx.post(f"{base}/apiv1", json=payload, timeout=30)
-        data = resp.json()
-        if "error" in data:
-            raise RuntimeError(data["error"].get("message", str(data["error"])))
-        return data.get("result", {})
+        with api_tracker.track("ace", f"ace_{function_name}"):
+            resp = httpx.post(f"{base}/apiv1", json=payload, timeout=30)
+            data = resp.json()
+            if "error" in data:
+                raise RuntimeError(data["error"].get("message", str(data["error"])))
+            return data.get("result", {})
 
     def ace_query(self, question: str, timeout: int = 120) -> dict:
         """Ask Geotab Ace a natural language question about fleet data.
