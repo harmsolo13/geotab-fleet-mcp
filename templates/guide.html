@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Guide — Fleet Command Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-card: rgba(15, 20, 35, 0.85);
+            --bg-card-hover: rgba(25, 32, 55, 0.9);
+            --border-glass: rgba(255, 255, 255, 0.08);
+            --text-primary: #e8ecf4;
+            --text-secondary: #8892a8;
+            --text-muted: #5a6478;
+            --accent-blue: #4a9eff;
+            --accent-green: #34d399;
+            --accent-yellow: #fbbf24;
+            --accent-red: #f87171;
+            --accent-purple: #a78bfa;
+            --bg-panel: #0f1423;
+            --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            color-scheme: dark;
+        }
+        [data-theme="light"] {
+            --bg-primary: #f0f2f5;
+            --bg-card: rgba(255, 255, 255, 0.92);
+            --bg-card-hover: rgba(240, 242, 245, 0.95);
+            --border-glass: rgba(0, 0, 0, 0.1);
+            --text-primary: #1a1d23;
+            --text-secondary: #5a6478;
+            --text-muted: #8892a8;
+            --accent-blue: #2b7de9;
+            --accent-green: #16a34a;
+            --accent-yellow: #d97706;
+            --accent-red: #dc2626;
+            --accent-purple: #7c3aed;
+            --bg-panel: #ffffff;
+            color-scheme: light;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: var(--font);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.7;
+        }
+
+        /* ── Layout ─────────────────────────────────────────────── */
+        .guide-wrapper {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* ── Sidebar Nav ────────────────────────────────────────── */
+        .guide-nav {
+            position: sticky;
+            top: 0;
+            width: 240px;
+            min-width: 240px;
+            height: 100vh;
+            background: var(--bg-card);
+            border-right: 1px solid var(--border-glass);
+            padding: 24px 0;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        .guide-nav-header {
+            padding: 0 20px 20px;
+            border-bottom: 1px solid var(--border-glass);
+            margin-bottom: 12px;
+        }
+        .guide-nav-header h2 {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--accent-blue);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .guide-nav a {
+            display: block;
+            padding: 8px 20px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+            border-left: 3px solid transparent;
+            transition: all 0.15s;
+        }
+        .guide-nav a:hover,
+        .guide-nav a.active {
+            color: var(--accent-blue);
+            background: var(--bg-card-hover);
+            border-left-color: var(--accent-blue);
+        }
+        .guide-nav-footer {
+            margin-top: auto;
+            padding: 16px 20px;
+            border-top: 1px solid var(--border-glass);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .guide-nav-footer a,
+        .guide-nav-footer button {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            border: 1px solid var(--border-glass);
+            transition: all 0.15s;
+        }
+        .guide-nav-footer a {
+            color: var(--text-secondary);
+            background: transparent;
+        }
+        .guide-nav-footer a:hover { color: var(--accent-blue); }
+        .btn-download {
+            background: var(--accent-blue) !important;
+            color: #fff !important;
+            border: none !important;
+            font-family: var(--font);
+        }
+        .btn-download:hover { opacity: 0.85; }
+        .btn-theme {
+            background: var(--bg-card-hover) !important;
+            color: var(--text-primary) !important;
+            font-family: var(--font);
+        }
+
+        /* ── Content ────────────────────────────────────────────── */
+        .guide-content {
+            flex: 1;
+            max-width: 780px;
+            padding: 40px 48px 80px;
+        }
+        .guide-content h1 {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .guide-content .subtitle {
+            color: var(--text-secondary);
+            font-size: 16px;
+            margin-bottom: 40px;
+        }
+        .guide-content section {
+            margin-bottom: 48px;
+            scroll-margin-top: 24px;
+        }
+        .guide-content h2 {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-glass);
+        }
+        .guide-content h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin: 16px 0 6px;
+            color: var(--accent-blue);
+        }
+        .guide-content p {
+            margin-bottom: 12px;
+            color: var(--text-secondary);
+        }
+        .guide-content ul, .guide-content ol {
+            margin: 0 0 12px 20px;
+            color: var(--text-secondary);
+        }
+        .guide-content li { margin-bottom: 4px; }
+
+        /* Callout boxes */
+        .callout {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin: 12px 0;
+            font-size: 13px;
+            border-left: 4px solid;
+        }
+        .callout-tip {
+            background: rgba(74, 158, 255, 0.08);
+            border-color: var(--accent-blue);
+            color: var(--text-secondary);
+        }
+        .callout-note {
+            background: rgba(167, 139, 250, 0.08);
+            border-color: var(--accent-purple);
+            color: var(--text-secondary);
+        }
+        .callout strong { color: var(--text-primary); }
+
+        /* Status dots */
+        .status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 4px;
+            vertical-align: middle;
+        }
+        .dot-green { background: var(--accent-green); }
+        .dot-blue { background: var(--accent-blue); }
+        .dot-yellow { background: var(--accent-yellow); }
+        .dot-red { background: var(--accent-red); }
+        .dot-grey { background: var(--text-muted); }
+
+        /* Keyboard shortcut badges */
+        kbd {
+            display: inline-block;
+            padding: 2px 7px;
+            font-size: 12px;
+            font-family: var(--font);
+            background: var(--bg-card-hover);
+            border: 1px solid var(--border-glass);
+            border-radius: 4px;
+            color: var(--text-primary);
+        }
+
+        /* Field table */
+        .field-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0;
+            font-size: 13px;
+        }
+        .field-table th, .field-table td {
+            text-align: left;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border-glass);
+        }
+        .field-table th {
+            color: var(--text-muted);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.5px;
+        }
+        .field-table td { color: var(--text-secondary); }
+
+        /* ── Mobile ─────────────────────────────────────────────── */
+        @media (max-width: 768px) {
+            .guide-nav {
+                position: fixed;
+                left: -260px;
+                z-index: 100;
+                transition: left 0.25s;
+                width: 260px;
+                min-width: 260px;
+            }
+            .guide-nav.open { left: 0; }
+            .guide-content { padding: 24px 20px 60px; }
+            .mobile-toggle {
+                display: flex !important;
+                position: fixed;
+                top: 12px;
+                left: 12px;
+                z-index: 101;
+                width: 36px;
+                height: 36px;
+                border-radius: 8px;
+                background: var(--bg-card);
+                border: 1px solid var(--border-glass);
+                color: var(--text-primary);
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                font-size: 18px;
+            }
+            .mobile-overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.5);
+                z-index: 99;
+            }
+            .guide-nav.open ~ .mobile-overlay { display: block; }
+        }
+        .mobile-toggle { display: none; }
+    </style>
+</head>
+<body>
+    <button class="mobile-toggle" onclick="document.querySelector('.guide-nav').classList.toggle('open')">&#9776;</button>
+    <div class="mobile-overlay" onclick="document.querySelector('.guide-nav').classList.remove('open')"></div>
+
+    <div class="guide-wrapper">
+        <!-- Sidebar Navigation -->
+        <nav class="guide-nav" id="guideNav">
+            <div class="guide-nav-header">
+                <h2>User Guide</h2>
+            </div>
+            <a href="#welcome">Welcome</a>
+            <a href="#sidebar">Sidebar &amp; KPIs</a>
+            <a href="#map">Map View</a>
+            <a href="#controls">Map Controls</a>
+            <a href="#detail">Vehicle Detail</a>
+            <a href="#replay">Trip Replay</a>
+            <a href="#report">Fleet Report</a>
+            <a href="#chat">Chat Assistant</a>
+            <a href="#theme">Theme</a>
+            <a href="#tips">Tips &amp; Shortcuts</a>
+            <div class="guide-nav-footer">
+                <a href="/" title="Back to Dashboard">&larr; Dashboard</a>
+                <button class="btn-theme" onclick="toggleGuideTheme()" id="guideThemeBtn">Toggle Theme</button>
+                <button class="btn-download" onclick="downloadGuide()">Download Guide</button>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="guide-content">
+            <h1>Fleet Command Center</h1>
+            <p class="subtitle">A real-time fleet management dashboard powered by Geotab API, Google Maps, and AI assistants.</p>
+
+            <!-- 1. Welcome -->
+            <section id="welcome">
+                <h2>1. Welcome</h2>
+                <p>Fleet Command Center gives you a live operational picture of your entire fleet. Vehicles appear on the map in real time, colour-coded by status. The sidebar shows aggregate statistics, KPI cards, and a searchable vehicle list. AI-powered features include a chat assistant (Google Gemini), executive reports (Gemini + Geotab Ace AI), and natural-language action commands.</p>
+                <p>On first load the dashboard connects to Geotab, fetches your fleet, and renders every vehicle on the map. Data refreshes automatically every 30 seconds.</p>
+                <div class="callout callout-tip"><strong>Tip:</strong> Bookmark the dashboard URL for quick access. The guide is always available from the <strong>?</strong> button in the toolbar.</div>
+            </section>
+
+            <!-- 2. Sidebar -->
+            <section id="sidebar">
+                <h2>2. Sidebar &amp; KPIs</h2>
+                <h3>Fleet Stats Bar</h3>
+                <p>The four cards at the top of the sidebar show real-time counts:</p>
+                <ul>
+                    <li><strong>Vehicles</strong> &mdash; total fleet size</li>
+                    <li><strong>Moving</strong> &mdash; vehicles currently in motion (speed &gt; 0)</li>
+                    <li><strong>Stopped</strong> &mdash; stationary vehicles</li>
+                    <li><strong>Faults</strong> &mdash; active diagnostic fault count</li>
+                </ul>
+
+                <h3>KPI Cards</h3>
+                <p>Six key performance indicators derived from today's trip and exception data:</p>
+                <table class="field-table">
+                    <tr><th>KPI</th><th>Description</th></tr>
+                    <tr><td>Total km</td><td>Combined distance driven across all vehicles today</td></tr>
+                    <tr><td>Trips</td><td>Number of completed trips today</td></tr>
+                    <tr><td>Idle %</td><td>Percentage of engine-on time spent idling</td></tr>
+                    <tr><td>Drive hrs</td><td>Total driving hours across the fleet</td></tr>
+                    <tr><td>Max km/h</td><td>Highest recorded speed today</td></tr>
+                    <tr><td>Exceptions</td><td>Total rule exception events</td></tr>
+                </table>
+
+                <h3>Vehicle List</h3>
+                <p>Below the KPIs, the scrollable vehicle list shows every vehicle with its name, status indicator, and speed. Click any vehicle to select it on the map and open its detail panel.</p>
+                <p>Use the <strong>search bar</strong> to filter by vehicle name, driver name, department, or make (when enrichment is enabled).</p>
+
+                <h3>Fault List</h3>
+                <p>Beneath the vehicle list, active faults are shown with the affected vehicle, fault code, and description.</p>
+            </section>
+
+            <!-- 3. Map View -->
+            <section id="map">
+                <h2>3. Map View</h2>
+                <p>The main area displays a Google Maps view with vehicle markers, zone overlays, and an optional activity heatmap.</p>
+
+                <h3>Vehicle Markers</h3>
+                <p>Each vehicle is shown as a coloured dot. The colour indicates status:</p>
+                <ul>
+                    <li><span class="status-dot dot-green"></span> <strong>Green</strong> &mdash; Moving (speed &gt; 0)</li>
+                    <li><span class="status-dot dot-blue"></span> <strong>Blue</strong> &mdash; Stopped, engine off</li>
+                    <li><span class="status-dot dot-yellow"></span> <strong>Yellow</strong> &mdash; Idling (stopped, engine on)</li>
+                    <li><span class="status-dot dot-red"></span> <strong>Red</strong> &mdash; Has active fault(s)</li>
+                </ul>
+                <p>Click a marker to select the vehicle and open its detail panel on the right side of the map.</p>
+
+                <h3>Zone Overlays</h3>
+                <p>Geotab zones (geofences) appear as coloured polygons on the map. These are loaded from your Geotab database and update on each data refresh.</p>
+            </section>
+
+            <!-- 4. Map Controls -->
+            <section id="controls">
+                <h2>4. Map Controls</h2>
+                <p>The floating toolbar at the top of the map provides quick access to key features:</p>
+                <table class="field-table">
+                    <tr><th>Button</th><th>Action</th></tr>
+                    <tr><td><strong>Heatmap</strong></td><td>Toggle the activity heatmap layer on/off. Shows ~1000 trip stop points weighted by duration &mdash; hot spots indicate frequent activity areas.</td></tr>
+                    <tr><td><strong>Report</strong></td><td>Generate a fleet executive report combining Geotab Ace AI analysis and Google Gemini narrative summary. Opens in a modal with print/save options.</td></tr>
+                    <tr><td><strong>Lock View</strong></td><td>Prevents the map from auto-panning when data refreshes. Useful when you're studying a specific area. The button highlights blue when active.</td></tr>
+                    <tr><td><strong>Solo</strong></td><td>Solo Mode &mdash; hides all markers except the currently selected vehicle. Click again to show all vehicles. Highlights blue when active.</td></tr>
+                    <tr><td><strong>Fit All</strong></td><td>Zooms and pans the map to fit all vehicle markers in view.</td></tr>
+                    <tr><td><strong>? Guide</strong></td><td>Opens this user guide in a new tab.</td></tr>
+                </table>
+            </section>
+
+            <!-- 5. Vehicle Detail -->
+            <section id="detail">
+                <h2>5. Vehicle Detail Panel</h2>
+                <p>Click a vehicle marker on the map or a vehicle in the sidebar list to open the detail panel. It slides in from the right side of the map.</p>
+
+                <h3>Information Fields</h3>
+                <table class="field-table">
+                    <tr><th>Field</th><th>Description</th></tr>
+                    <tr><td>Name</td><td>Vehicle display name from Geotab</td></tr>
+                    <tr><td>Status</td><td>Current state (Moving / Stopped / Idling)</td></tr>
+                    <tr><td>Speed</td><td>Current speed in km/h</td></tr>
+                    <tr><td>Location</td><td>Latitude and longitude coordinates</td></tr>
+                    <tr><td>Bearing</td><td>Direction of travel in degrees</td></tr>
+                    <tr><td>Driver</td><td>Assigned driver name (enrichment)</td></tr>
+                    <tr><td>Department</td><td>Fleet department (enrichment)</td></tr>
+                    <tr><td>Type</td><td>Vehicle type &mdash; Van, Pickup, Sedan, SUV, EV, Heavy (enrichment)</td></tr>
+                    <tr><td>Colour</td><td>Vehicle colour (enrichment)</td></tr>
+                    <tr><td>Fuel</td><td>Fuel type &mdash; Gasoline, Diesel, Electric, Hybrid (enrichment)</td></tr>
+                    <tr><td>Odometer</td><td>Current odometer reading in km (enrichment)</td></tr>
+                </table>
+                <div class="callout callout-note"><strong>Note:</strong> Fields marked "enrichment" are sourced from the local enrichment database. Toggle enrichment on/off via the API endpoint <kbd>/api/enrichment/toggle</kbd>.</div>
+
+                <h3>Faults Section</h3>
+                <p>Active diagnostic trouble codes for the selected vehicle are listed below the info fields, with fault code and description.</p>
+
+                <h3>Trips Section</h3>
+                <p>Recent trips are shown with start/end times, distance, and duration. Click any trip row to launch Trip Replay.</p>
+            </section>
+
+            <!-- 6. Trip Replay -->
+            <section id="replay">
+                <h2>6. Trip Replay</h2>
+                <p>Trip Replay animates a vehicle's journey along its GPS breadcrumb trail, showing real-time telemetry data.</p>
+
+                <h3>Starting Replay</h3>
+                <ol>
+                    <li>Select a vehicle (click marker or sidebar item)</li>
+                    <li>In the detail panel, find the <strong>Trips</strong> section</li>
+                    <li>Click any trip row to start replay</li>
+                </ol>
+
+                <h3>Replay Controls</h3>
+                <table class="field-table">
+                    <tr><th>Control</th><th>Action</th></tr>
+                    <tr><td>Play / Pause</td><td>Start or pause the animation</td></tr>
+                    <tr><td>Speed selector</td><td>Choose playback speed: 1x, 2x, 5x, 10x</td></tr>
+                    <tr><td>Timeline slider</td><td>Scrub to any point in the trip</td></tr>
+                    <tr><td>Close (X)</td><td>Exit replay and return to normal map view</td></tr>
+                </table>
+
+                <h3>Telemetry HUD</h3>
+                <p>During replay, the heads-up display shows:</p>
+                <ul>
+                    <li><strong>Speed</strong> &mdash; km/h at the current breadcrumb point</li>
+                    <li><strong>Distance</strong> &mdash; cumulative distance travelled</li>
+                    <li><strong>Time</strong> &mdash; timestamp of the current GPS log record</li>
+                    <li><strong>Bearing</strong> &mdash; direction of travel</li>
+                </ul>
+            </section>
+
+            <!-- 7. Fleet Report -->
+            <section id="report">
+                <h2>7. Fleet Report</h2>
+                <p>The executive fleet report combines two AI sources for a comprehensive analysis of your fleet's current state.</p>
+
+                <h3>Generating a Report</h3>
+                <ol>
+                    <li>Click the <strong>Report</strong> button in the map toolbar</li>
+                    <li>Wait for generation (typically 10&ndash;20 seconds on first load, near-instant when cached)</li>
+                    <li>The report opens in a modal overlay</li>
+                </ol>
+
+                <h3>Report Contents</h3>
+                <ul>
+                    <li><strong>Geotab Ace AI Analysis</strong> &mdash; structured fleet insights from Geotab's built-in AI</li>
+                    <li><strong>Gemini Executive Summary</strong> &mdash; narrative report generated by Google Gemini covering fleet health, utilisation, and recommendations</li>
+                </ul>
+
+                <h3>Export Options</h3>
+                <table class="field-table">
+                    <tr><th>Button</th><th>Action</th></tr>
+                    <tr><td>Print</td><td>Opens the browser print dialog for the report</td></tr>
+                    <tr><td>Save HTML</td><td>Downloads the report as a standalone HTML file</td></tr>
+                    <tr><td>Save PDF</td><td>Opens print dialog with PDF destination pre-selected (browser-dependent)</td></tr>
+                </table>
+            </section>
+
+            <!-- 8. Chat Assistant -->
+            <section id="chat">
+                <h2>8. Chat Assistant</h2>
+                <p>The AI chat panel (bottom-right of the map) is powered by Google Gemini with access to your live fleet data via function calling.</p>
+
+                <h3>Opening the Chat</h3>
+                <p>Click the chat toggle button (speech bubble icon) at the bottom-right corner of the map. The chat panel slides up with a message input area.</p>
+
+                <h3>Asking Questions</h3>
+                <p>Type any fleet-related question in natural language. Examples:</p>
+                <ul>
+                    <li>"Which vehicles are currently moving?"</li>
+                    <li>"Show me the fastest vehicle today"</li>
+                    <li>"How many faults are active right now?"</li>
+                    <li>"Summarise today's fleet activity"</li>
+                </ul>
+
+                <h3>Voice Input</h3>
+                <p>Click the <strong>microphone button</strong> next to the text input to dictate your question via speech recognition (browser must support Web Speech API).</p>
+
+                <h3>Action Commands</h3>
+                <p>The chat can perform actions on your behalf through Gemini function calling:</p>
+                <ul>
+                    <li><strong>Create Zone</strong> &mdash; "Create a geofence around downtown Toronto" &mdash; the AI creates the zone in Geotab and refreshes the map</li>
+                    <li><strong>Send Message</strong> &mdash; "Send a text message to Vehicle 5" &mdash; dispatches a message through Geotab's TextMessage API</li>
+                </ul>
+                <p>A toast notification confirms each action.</p>
+
+                <h3>Clearing Chat</h3>
+                <p>Click the <strong>Clear</strong> button in the chat header to reset the conversation history.</p>
+            </section>
+
+            <!-- 9. Theme -->
+            <section id="theme">
+                <h2>9. Theme</h2>
+                <p>Fleet Command Center supports both dark and light themes.</p>
+                <ul>
+                    <li><strong>Dashboard:</strong> Click the sun/moon icon in the top-right corner of the sidebar header</li>
+                    <li><strong>This guide:</strong> Use the "Toggle Theme" button in the sidebar</li>
+                </ul>
+                <p>Your theme preference is saved in your browser's local storage and persists across sessions. The guide page reads the same preference, so switching theme in the dashboard also applies here.</p>
+            </section>
+
+            <!-- 10. Tips & Shortcuts -->
+            <section id="tips">
+                <h2>10. Tips &amp; Shortcuts</h2>
+                <table class="field-table">
+                    <tr><th>Shortcut / Feature</th><th>Description</th></tr>
+                    <tr><td><kbd>Enter</kbd></td><td>Send message in chat</td></tr>
+                    <tr><td>Search bar</td><td>Filters by vehicle name, driver, department, or make</td></tr>
+                    <tr><td><kbd>?refresh=1</kbd></td><td>Append to any API URL to bypass the cache and force a fresh fetch</td></tr>
+                    <tr><td>Lock View + Solo</td><td>Combine both for a focused single-vehicle study view</td></tr>
+                    <tr><td>Heatmap + Zoom</td><td>Zoom into a heatmap hotspot to identify high-activity areas</td></tr>
+                    <tr><td>Trip click</td><td>Click any trip in the detail panel to instantly launch replay</td></tr>
+                </table>
+                <div class="callout callout-tip"><strong>Tip:</strong> The enrichment layer adds driver names, departments, and vehicle details from a local database. This makes the demo data feel like a real fleet. It can be toggled off for a raw Geotab-only view.</div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        // Theme — read from dashboard's localStorage key
+        (function() {
+            const saved = localStorage.getItem('fleet-theme');
+            if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
+        })();
+
+        function toggleGuideTheme() {
+            const current = document.documentElement.getAttribute('data-theme');
+            const next = current === 'light' ? '' : 'light';
+            if (next) {
+                document.documentElement.setAttribute('data-theme', 'light');
+                localStorage.setItem('fleet-theme', 'light');
+            } else {
+                document.documentElement.removeAttribute('data-theme');
+                localStorage.setItem('fleet-theme', 'dark');
+            }
+        }
+
+        // Active nav highlight on scroll
+        const sections = document.querySelectorAll('section[id]');
+        const navLinks = document.querySelectorAll('.guide-nav a[href^="#"]');
+        window.addEventListener('scroll', () => {
+            let current = '';
+            sections.forEach(s => {
+                if (window.scrollY >= s.offsetTop - 60) current = s.id;
+            });
+            navLinks.forEach(a => {
+                a.classList.toggle('active', a.getAttribute('href') === '#' + current);
+            });
+        }, { passive: true });
+
+        // Download standalone HTML
+        function downloadGuide() {
+            const clone = document.documentElement.cloneNode(true);
+            // Remove nav footer buttons (not needed in standalone)
+            const footer = clone.querySelector('.guide-nav-footer');
+            if (footer) footer.remove();
+            // Remove mobile toggle
+            const mt = clone.querySelector('.mobile-toggle');
+            if (mt) mt.remove();
+            const mo = clone.querySelector('.mobile-overlay');
+            if (mo) mo.remove();
+            // Remove script tags
+            clone.querySelectorAll('script').forEach(s => s.remove());
+
+            const html = '<!DOCTYPE html>\n' + clone.outerHTML;
+            const blob = new Blob([html], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'Fleet_Command_Center_Guide.html';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>

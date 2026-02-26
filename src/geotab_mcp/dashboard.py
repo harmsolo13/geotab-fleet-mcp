@@ -134,6 +134,12 @@ def index():
     return render_template("dashboard.html", maps_api_key=maps_key)
 
 
+@app.route("/guide")
+def guide():
+    """User guide page."""
+    return render_template("guide.html")
+
+
 # ── API Routes ───────────────────────────────────────────────────────────
 
 @app.route("/api/vehicles")
