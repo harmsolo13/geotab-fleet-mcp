@@ -314,15 +314,29 @@ async function startTripReplay(deviceId, fromDate, toDate) {
         replayPoints = data.points;
         replayIndex = 0;
 
-        // Draw the full path
-        const path = replayPoints.map(p => ({ lat: p.lat, lng: p.lng }));
-        replayPolyline = new google.maps.Polyline({
-            map: map,
-            path: path,
-            strokeColor: "#4a9eff",
-            strokeWeight: 3,
-            strokeOpacity: 0.8,
-        });
+        // Draw speed-colored path segments
+        replayPolyline = [];
+        for (let i = 1; i < replayPoints.length; i++) {
+            const prev = replayPoints[i - 1];
+            const cur = replayPoints[i];
+            const speed = cur.speed || 0;
+            let color = "#8892a8"; // stopped
+            if (speed > 0 && speed < 15) color = "#34d399"; // slow (green)
+            else if (speed >= 15 && speed < 30) color = "#fbbf24"; // normal (yellow)
+            else if (speed >= 30) color = "#f87171"; // fast (red)
+
+            const seg = new google.maps.Polyline({
+                map: map,
+                path: [
+                    { lat: prev.lat, lng: prev.lng },
+                    { lat: cur.lat, lng: cur.lng },
+                ],
+                strokeColor: color,
+                strokeWeight: 4,
+                strokeOpacity: 0.85,
+            });
+            replayPolyline.push(seg);
+        }
 
         // Animated marker
         const markerEl = document.createElement("div");
@@ -330,13 +344,13 @@ async function startTripReplay(deviceId, fromDate, toDate) {
         markerEl.innerHTML = '<span class="replay-dot"></span>';
         replayMarker = new google.maps.marker.AdvancedMarkerElement({
             map: map,
-            position: path[0],
+            position: { lat: replayPoints[0].lat, lng: replayPoints[0].lng },
             content: markerEl,
         });
 
         // Fit map to path
         const bounds = new google.maps.LatLngBounds();
-        path.forEach(p => bounds.extend(p));
+        replayPoints.forEach(p => bounds.extend({ lat: p.lat, lng: p.lng }));
         map.fitBounds(bounds, { padding: 60 });
 
         // Show controls
@@ -403,6 +417,103 @@ function updateReplayPosition() {
     const pt = replayPoints[replayIndex];
     replayMarker.position = { lat: pt.lat, lng: pt.lng };
     document.getElementById("replaySlider").value = replayIndex;
+
+    // Update HUD with data
+    updateReplayHUD(replayIndex);
+
+    // Color the marker dot by speed
+    const dot = replayMarker.content?.querySelector(".replay-dot");
+    if (dot) {
+        const speed = pt.speed || 0;
+        if (speed === 0) dot.style.background = "#8892a8";
+        else if (speed < 15) dot.style.background = "#34d399";
+        else if (speed < 30) dot.style.background = "#fbbf24";
+        else dot.style.background = "#f87171";
+    }
+}
+
+function updateReplayHUD(index) {
+    const hud = document.getElementById("replayHUD");
+    if (!hud || replayPoints.length === 0) return;
+
+    const pt = replayPoints[index];
+    const speed = pt.speed || 0;
+
+    // Elapsed time
+    const startTime = new Date(replayPoints[0].dateTime).getTime();
+    const curTime = new Date(pt.dateTime).getTime();
+    const elapsedMs = curTime - startTime;
+    const elapsedMin = Math.floor(elapsedMs / 60000);
+    const elapsedSec = Math.floor((elapsedMs % 60000) / 1000);
+
+    // Distance traveled (cumulative from point 0 to current)
+    let distM = 0;
+    for (let i = 1; i <= index; i++) {
+        distM += haversine(replayPoints[i - 1].lat, replayPoints[i - 1].lng, replayPoints[i].lat, replayPoints[i].lng);
+    }
+    const distKm = (distM / 1000).toFixed(2);
+
+    // Acceleration (speed delta vs previous point)
+    let accel = 0;
+    if (index > 0) {
+        const prevSpeed = replayPoints[index - 1].speed || 0;
+        const prevTime = new Date(replayPoints[index - 1].dateTime).getTime();
+        const dtSec = (curTime - prevTime) / 1000;
+        if (dtSec > 0) accel = ((speed - prevSpeed) / 3.6) / dtSec; // m/s²
+    }
+
+    // Max speed up to this point
+    let maxSpd = 0;
+    for (let i = 0; i <= index; i++) {
+        if ((replayPoints[i].speed || 0) > maxSpd) maxSpd = replayPoints[i].speed;
+    }
+
+    // Average speed (non-zero points only)
+    let spdSum = 0, spdCount = 0;
+    for (let i = 0; i <= index; i++) {
+        if ((replayPoints[i].speed || 0) > 0) { spdSum += replayPoints[i].speed; spdCount++; }
+    }
+    const avgSpd = spdCount > 0 ? (spdSum / spdCount).toFixed(0) : "0";
+
+    // Timestamp display
+    const timeStr = formatDateTime(pt.dateTime);
+
+    // Speed color class
+    let speedClass = "hud-speed-stopped";
+    if (speed > 0 && speed < 15) speedClass = "hud-speed-slow";
+    else if (speed >= 15 && speed < 30) speedClass = "hud-speed-normal";
+    else if (speed >= 30) speedClass = "hud-speed-fast";
+
+    // Accel indicator
+    let accelStr = "—";
+    let accelClass = "";
+    if (Math.abs(accel) > 0.1) {
+        accelStr = (accel > 0 ? "+" : "") + accel.toFixed(1) + " m/s²";
+        accelClass = accel > 0.5 ? "hud-accel-pos" : accel < -0.5 ? "hud-accel-neg" : "";
+    }
+
+    hud.innerHTML = `
+        <div class="hud-row hud-main">
+            <span class="hud-speed ${speedClass}">${speed}</span>
+            <span class="hud-speed-unit">km/h</span>
+            <span class="hud-accel ${accelClass}">${accelStr}</span>
+        </div>
+        <div class="hud-row hud-stats">
+            <div class="hud-stat"><span class="hud-val">${distKm}</span><span class="hud-lbl">km</span></div>
+            <div class="hud-stat"><span class="hud-val">${elapsedMin}:${elapsedSec.toString().padStart(2, "0")}</span><span class="hud-lbl">elapsed</span></div>
+            <div class="hud-stat"><span class="hud-val">${avgSpd}</span><span class="hud-lbl">avg km/h</span></div>
+            <div class="hud-stat"><span class="hud-val">${maxSpd}</span><span class="hud-lbl">max km/h</span></div>
+        </div>
+        <div class="hud-row hud-time">${timeStr} &mdash; Point ${index + 1}/${replayPoints.length}</div>
+    `;
+}
+
+function haversine(lat1, lng1, lat2, lng2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function closeReplay() {
@@ -410,7 +521,14 @@ function closeReplay() {
     replayPoints = [];
     replayIndex = 0;
     if (replayMarker) { replayMarker.map = null; replayMarker = null; }
-    if (replayPolyline) { replayPolyline.setMap(null); replayPolyline = null; }
+    if (Array.isArray(replayPolyline)) {
+        replayPolyline.forEach(seg => seg.setMap(null));
+    } else if (replayPolyline) {
+        replayPolyline.setMap(null);
+    }
+    replayPolyline = null;
+    const hud = document.getElementById("replayHUD");
+    if (hud) hud.innerHTML = "";
     document.getElementById("replayControls")?.classList.add("hidden");
 }
 

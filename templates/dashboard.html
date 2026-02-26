@@ -132,17 +132,20 @@
 
     <!-- Trip Replay Controls -->
     <div id="replayControls" class="replay-controls hidden">
-        <button class="replay-btn" id="replayPlayBtn" onclick="toggleReplay()">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-        </button>
-        <input type="range" id="replaySlider" class="replay-slider" min="0" max="100" value="0" oninput="seekReplay(this.value)">
-        <select id="replaySpeed" class="replay-speed" onchange="setReplaySpeed(this.value)">
-            <option value="1">1x</option>
-            <option value="2" selected>2x</option>
-            <option value="5">5x</option>
-            <option value="10">10x</option>
-        </select>
-        <button class="replay-close-btn" onclick="closeReplay()">&times;</button>
+        <div class="replay-bar">
+            <button class="replay-btn" id="replayPlayBtn" onclick="toggleReplay()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </button>
+            <input type="range" id="replaySlider" class="replay-slider" min="0" max="100" value="0" oninput="seekReplay(this.value)">
+            <select id="replaySpeed" class="replay-speed" onchange="setReplaySpeed(this.value)">
+                <option value="1">1x</option>
+                <option value="2" selected>2x</option>
+                <option value="5">5x</option>
+                <option value="10">10x</option>
+            </select>
+            <button class="replay-close-btn" onclick="closeReplay()">&times;</button>
+        </div>
+        <div class="replay-hud" id="replayHUD"></div>
     </div>
 
     <!-- Voice Chat Panel -->

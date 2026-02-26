@@ -1101,18 +1101,100 @@ select, select option {
     right: 16px;
     z-index: 18;
     display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 16px;
+    flex-direction: column;
+    gap: 0;
+    padding: 0;
     border-radius: 12px;
     background: var(--bg-card);
     backdrop-filter: blur(12px);
     border: 1px solid var(--border-glass);
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
 }
 
 .replay-controls.hidden {
     display: none;
+}
+
+.replay-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+}
+
+/* ── Replay HUD ─────────────────────────────────────────────────────── */
+
+.replay-hud {
+    padding: 8px 16px 10px;
+    border-top: 1px solid var(--border-glass);
+}
+
+.hud-row { display: flex; align-items: baseline; }
+
+.hud-main {
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+.hud-speed {
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+
+.hud-speed-unit {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-right: 12px;
+}
+
+.hud-accel {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.hud-accel-pos { color: var(--accent-green); }
+.hud-accel-neg { color: var(--accent-red); }
+
+.hud-speed-stopped { color: var(--text-muted); }
+.hud-speed-slow { color: var(--accent-green); }
+.hud-speed-normal { color: var(--accent-yellow); }
+.hud-speed-fast { color: var(--accent-red); }
+
+.hud-stats {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 4px;
+}
+
+.hud-stat {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+}
+
+.hud-val {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.hud-lbl {
+    font-size: 9px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.hud-time {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
 }
 
 .replay-btn {
