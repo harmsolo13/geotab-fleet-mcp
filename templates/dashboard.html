@@ -112,6 +112,19 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
             <span>Report</span>
         </button>
+        <span class="map-ctrl-sep"></span>
+        <button class="map-ctrl-btn" id="lockViewToggle" onclick="toggleViewLock()" title="Lock map view — prevent auto-pan on data refresh">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span>Lock View</span>
+        </button>
+        <button class="map-ctrl-btn" id="soloModeToggle" onclick="toggleSoloMode()" title="Solo mode — show only selected vehicle">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4m-10-10h4m12 0h4m-2.93-7.07l-2.83 2.83m-8.48 8.48l-2.83 2.83m0-14.14l2.83 2.83m8.48 8.48l2.83 2.83"/></svg>
+            <span>Solo</span>
+        </button>
+        <button class="map-ctrl-btn" onclick="fitAllVehicles()" title="Zoom to fit all vehicles">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+            <span>Fit All</span>
+        </button>
     </div>
 
     <!-- Report Modal -->

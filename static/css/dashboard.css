@@ -928,6 +928,13 @@ select, select option {
     pointer-events: none;
 }
 
+.map-ctrl-sep {
+    width: 1px;
+    height: 24px;
+    background: var(--border-glass);
+    align-self: center;
+}
+
 /* ── Report Modal ───────────────────────────────────────────────────── */
 
 .report-modal {
