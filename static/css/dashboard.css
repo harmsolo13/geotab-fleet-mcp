@@ -981,6 +981,34 @@ select, select option {
     font-weight: 700;
 }
 
+.report-actions {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+    margin-right: 16px;
+}
+
+.report-action-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-glass);
+    background: rgba(74, 158, 255, 0.08);
+    color: var(--accent-blue);
+    font-size: 12px;
+    font-weight: 600;
+    font-family: var(--font);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.report-action-btn:hover {
+    background: rgba(74, 158, 255, 0.18);
+    border-color: var(--accent-blue);
+}
+
 .report-close {
     background: none;
     border: none;
@@ -989,6 +1017,7 @@ select, select option {
     cursor: pointer;
     padding: 4px 8px;
     border-radius: 6px;
+    flex-shrink: 0;
 }
 
 .report-close:hover {
