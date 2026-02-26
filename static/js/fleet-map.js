@@ -74,18 +74,19 @@ function initMap() {
         mapId: "fleet-dashboard-map",
     });
 
-    // Load initial data
+    // Load initial data (KPIs delayed to avoid blocking vehicle load)
     loadVehicles();
     loadZones();
     loadFaults();
-    loadKPIs();
+    setTimeout(loadKPIs, 3000); // delay KPIs so vehicle data loads first
 
     // Start auto-refresh
     refreshTimer = setInterval(() => {
         loadVehicles();
         loadFaults();
-        loadKPIs();
     }, REFRESH_INTERVAL);
+    // KPIs refresh on a slower cycle (every 60s) since they're expensive
+    setInterval(loadKPIs, 60000);
 }
 
 

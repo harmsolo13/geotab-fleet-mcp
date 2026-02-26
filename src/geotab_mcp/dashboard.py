@@ -310,7 +310,7 @@ def _circle_points(lat: float, lng: float, radius_m: float = 200, n: int = 8) ->
 
 @app.route("/api/fleet-kpis")
 def api_fleet_kpis():
-    """Aggregated fleet KPIs from trip data (cached)."""
+    """Aggregated fleet KPIs from trip data (heavily cached, rate-limit safe)."""
     cache_key = "api_fleet_kpis"
     _cache_force(cache_key)
     cached = _cache_get(cache_key)
@@ -330,47 +330,54 @@ def api_fleet_kpis():
         max_speed = 0.0
         vehicles_with_trips = 0
 
-        # Sample trips from up to 50 vehicles
-        for v in vehicles[:50]:
-            try:
-                trips = client.get_trips(device_id=v["id"], limit=20)
-                if trips:
-                    vehicles_with_trips += 1
-                    total_trips += len(trips)
-                    for t in trips:
-                        total_distance += t.get("distance") or 0
-                        total_driving_s += _parse_duration(t.get("drivingDuration"))
-                        total_idle_s += _parse_duration(t.get("idlingDuration"))
-                        ms = t.get("maximumSpeed") or 0
-                        if ms > max_speed:
-                            max_speed = ms
-            except Exception:
-                continue
+        # Sample trips from only 5 vehicles to stay within rate limits
+        # (50 vehicles × get_trips = 50 API calls = instant rate limit hit)
+        import random
+        sample = random.sample(vehicles, min(5, len(vehicles)))
+        for v in sample:
+            # Reuse per-vehicle trip cache if available
+            trip_cache_key = f"trips_{v['id']}_None_None"
+            trips = _cache_get(trip_cache_key)
+            if trips is None:
+                try:
+                    trips_raw = client.get_trips(device_id=v["id"], limit=20)
+                    trips = {"trips": trips_raw}
+                    _cache_set(trip_cache_key, trips, "trips")
+                except Exception:
+                    continue
+            trip_list = trips.get("trips", trips) if isinstance(trips, dict) else trips
+            if trip_list:
+                vehicles_with_trips += 1
+                total_trips += len(trip_list)
+                for t in trip_list:
+                    total_distance += t.get("distance") or 0
+                    total_driving_s += _parse_duration(t.get("drivingDuration"))
+                    total_idle_s += _parse_duration(t.get("idlingDuration"))
+                    ms = t.get("maximumSpeed") or 0
+                    if ms > max_speed:
+                        max_speed = ms
 
+        # Scale up estimates to full fleet
+        scale = len(vehicles) / max(vehicles_with_trips, 1)
         total_active_s = total_driving_s + total_idle_s
         idle_pct = (total_idle_s / total_active_s * 100) if total_active_s > 0 else 0
 
-        # Exception events count
-        exceptions_result = _cache_get("api_exceptions_all")
-        if exceptions_result is None:
-            try:
-                exceptions = client.get_exception_events(limit=500)
-                exceptions_result = {"count": len(exceptions)}
-                _cache_set("api_exceptions_all", exceptions_result, "faults")
-            except Exception:
-                exceptions_result = {"count": 0}
+        # Reuse cached faults for exception count
+        faults_result = _cache_get("api_faults_all")
+        exception_count = faults_result["count"] if faults_result else 0
 
         result = {
-            "total_distance_km": round(total_distance / 1000, 1),
-            "total_trips": total_trips,
+            "total_distance_km": round(total_distance * scale / 1000, 1),
+            "total_trips": round(total_trips * scale),
             "idle_percent": round(idle_pct, 1),
-            "total_driving_hours": round(total_driving_s / 3600, 1),
+            "total_driving_hours": round(total_driving_s * scale / 3600, 1),
             "max_speed_kmh": round(max_speed, 1),
-            "vehicles_with_trips": vehicles_with_trips,
-            "total_exceptions": exceptions_result["count"],
+            "vehicles_with_trips": len(vehicles),
+            "total_exceptions": exception_count,
             "avg_trips_per_vehicle": round(total_trips / max(vehicles_with_trips, 1), 1),
         }
-        _cache_set(cache_key, result, "trips")
+        # Long TTL — KPIs don't need to refresh often
+        _cache_store[cache_key] = (time.monotonic() + 300, result)
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -380,7 +387,7 @@ def api_fleet_kpis():
 
 @app.route("/api/heatmap-data")
 def api_heatmap_data():
-    """Trip stop points with duration weights for heatmap visualization."""
+    """Trip stop points with duration weights for heatmap visualization (rate-limit safe)."""
     cache_key = "api_heatmap"
     _cache_force(cache_key)
     cached = _cache_get(cache_key)
@@ -394,24 +401,34 @@ def api_heatmap_data():
             _cache_set("vehicles", vehicles, "vehicles")
 
         points = []
-        for v in vehicles[:50]:
-            try:
-                trips = client.get_trips(device_id=v["id"], limit=20)
-                for t in trips:
-                    sp = t.get("stopPoint")
-                    if sp and sp.get("x") is not None and sp.get("y") is not None:
-                        stop_s = _parse_duration(t.get("stopDuration"))
-                        weight = max(1, min(10, stop_s / 600))  # 10min = weight 1, 100min = weight 10
-                        points.append({
-                            "lat": sp["y"],
-                            "lng": sp["x"],
-                            "weight": round(weight, 1),
-                        })
-            except Exception:
-                continue
+        # Sample 5 vehicles to stay within rate limits
+        import random
+        sample = random.sample(vehicles, min(5, len(vehicles)))
+        for v in sample:
+            trip_cache_key = f"trips_{v['id']}_None_None"
+            trips_data = _cache_get(trip_cache_key)
+            if trips_data is None:
+                try:
+                    trips_raw = client.get_trips(device_id=v["id"], limit=20)
+                    trips_data = {"trips": trips_raw}
+                    _cache_set(trip_cache_key, trips_data, "trips")
+                except Exception:
+                    continue
+            trip_list = trips_data.get("trips", trips_data) if isinstance(trips_data, dict) else trips_data
+            for t in trip_list:
+                sp = t.get("stopPoint")
+                if sp and sp.get("x") is not None and sp.get("y") is not None:
+                    stop_s = _parse_duration(t.get("stopDuration"))
+                    weight = max(1, min(10, stop_s / 600))
+                    points.append({
+                        "lat": sp["y"],
+                        "lng": sp["x"],
+                        "weight": round(weight, 1),
+                    })
 
         result = {"count": len(points), "points": points}
-        _cache_set(cache_key, result, "trips")
+        # Long TTL
+        _cache_store[cache_key] = (time.monotonic() + 300, result)
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -429,27 +446,35 @@ def api_report():
             vehicles = client.get_vehicles(limit=500)
             _cache_set("vehicles", vehicles, "vehicles")
 
-        # Gather trip summaries per vehicle
+        # Gather trip summaries per vehicle (sample 5 to respect rate limits)
         vehicle_summaries = []
-        for v in vehicles[:30]:
-            try:
-                trips = client.get_trips(device_id=v["id"], limit=20)
-                if not trips:
+        import random
+        sample = random.sample(vehicles, min(5, len(vehicles)))
+        for v in sample:
+            trip_cache_key = f"trips_{v['id']}_None_None"
+            trips_data = _cache_get(trip_cache_key)
+            if trips_data is None:
+                try:
+                    trips_raw = client.get_trips(device_id=v["id"], limit=20)
+                    trips_data = {"trips": trips_raw}
+                    _cache_set(trip_cache_key, trips_data, "trips")
+                except Exception:
                     continue
-                total_dist = sum(t.get("distance") or 0 for t in trips)
-                total_drive = sum(_parse_duration(t.get("drivingDuration")) for t in trips)
-                total_idle = sum(_parse_duration(t.get("idlingDuration")) for t in trips)
-                max_spd = max((t.get("maximumSpeed") or 0) for t in trips)
-                vehicle_summaries.append({
-                    "name": v.get("name", v["id"]),
-                    "trips": len(trips),
-                    "distance_km": round(total_dist / 1000, 1),
-                    "driving_hours": round(total_drive / 3600, 1),
-                    "idle_hours": round(total_idle / 3600, 1),
-                    "max_speed_kmh": round(max_spd, 1),
-                })
-            except Exception:
+            trips = trips_data.get("trips", trips_data) if isinstance(trips_data, dict) else trips_data
+            if not trips:
                 continue
+            total_dist = sum(t.get("distance") or 0 for t in trips)
+            total_drive = sum(_parse_duration(t.get("drivingDuration")) for t in trips)
+            total_idle = sum(_parse_duration(t.get("idlingDuration")) for t in trips)
+            max_spd = max((t.get("maximumSpeed") or 0) for t in trips)
+            vehicle_summaries.append({
+                "name": v.get("name", v["id"]),
+                "trips": len(trips),
+                "distance_km": round(total_dist / 1000, 1),
+                "driving_hours": round(total_drive / 3600, 1),
+                "idle_hours": round(total_idle / 3600, 1),
+                "max_speed_kmh": round(max_spd, 1),
+            })
 
         # Get faults
         faults_data = _cache_get("api_faults_all")
@@ -609,7 +634,7 @@ def main():
     port = int(os.getenv("DASHBOARD_PORT", "5030"))
     debug = os.getenv("DASHBOARD_DEBUG", "false").lower() == "true"
     print(f"Fleet Dashboard starting on http://localhost:{port}")
-    app.run(host="0.0.0.0", port=port, debug=debug)
+    app.run(host="0.0.0.0", port=port, debug=debug, threaded=True)
 
 
 if __name__ == "__main__":
