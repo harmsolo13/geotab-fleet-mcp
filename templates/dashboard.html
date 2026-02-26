@@ -217,13 +217,13 @@
         </div>
     </div>
 
-    <!-- Google Maps JS API -->
+    <!-- Fleet map logic (must load before Maps API callback fires) -->
     <script>
         window.MAPS_API_KEY = "{{ maps_api_key }}";
     </script>
+    <script src="/static/js/fleet-map.js"></script>
     <script async defer
         src="https://maps.googleapis.com/maps/api/js?key={{ maps_api_key }}&callback=initMap&libraries=marker,visualization">
     </script>
-    <script src="/static/js/fleet-map.js"></script>
 </body>
 </html>
