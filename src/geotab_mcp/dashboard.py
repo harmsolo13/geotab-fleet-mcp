@@ -522,17 +522,19 @@ def api_report():
             except Exception:
                 faults_data = {"count": 0, "faults": []}
 
-        # Query Ace AI for fleet insights
+        # Query Ace AI for fleet insights (allow up to 90s — Ace can be slow)
         ace_insight = ""
         try:
             ace_result = client.ace_query(
-                "Summarize the fleet's overall performance, top concerns, and key recommendations.",
-                timeout=60,
+                "Provide a detailed summary of the fleet's overall performance including "
+                "total distance driven, fuel consumption trends, top safety concerns, "
+                "idle time analysis, and your top 3 recommendations for fleet improvement.",
+                timeout=90,
             )
             if ace_result.get("status") == "complete":
                 ace_insight = ace_result.get("answer", "")
         except Exception:
-            ace_insight = "Ace AI was unavailable for this report."
+            ace_insight = ""
 
         # Build data payload for Gemini
         report_data = {
@@ -547,6 +549,21 @@ def api_report():
         # Ask Gemini to generate the report
         from geotab_mcp.gemini_client import GeminiClient
         gemini = GeminiClient()
+
+        # Build Ace section instruction based on whether we got a real response
+        if ace_insight and "unavailable" not in ace_insight.lower():
+            ace_instruction = (
+                "5. **Geotab Ace AI Analysis** — This is CRITICAL. Display the following Ace AI analysis "
+                "VERBATIM in a styled blockquote or card with a distinct background. "
+                "Do NOT summarize or skip it. Show the full text:\n"
+                f"---\n{ace_insight}\n---\n"
+            )
+        else:
+            ace_instruction = (
+                "5. Geotab Ace AI Analysis — Note that Ace AI was unavailable for this report. "
+                "Show a brief note that Ace AI insights will be available in the next report cycle.\n"
+            )
+
         prompt = (
             "Generate a professional HTML executive fleet report. "
             "Use the following structure with styled HTML (inline CSS, modern look, no external deps):\n"
@@ -554,10 +571,11 @@ def api_report():
             "2. Fleet Overview (vehicle count, total distance, trips, driving hours)\n"
             "3. Top Performers (highest distance, most trips)\n"
             "4. Anomalies & Concerns (high idle, faults, excessive speed)\n"
-            "5. Ace AI Insights (include the Ace analysis below)\n"
+            + ace_instruction +
             "6. Recommendations (3-5 actionable items)\n\n"
             "Use a clean, modern style. Return ONLY the HTML body content (no <html>/<head> tags). "
-            "Use colors: blue #4a9eff for headers, green #34d399 for positive, red #f87171 for alerts."
+            "Use colors: blue #4a9eff for headers, green #34d399 for positive, red #f87171 for alerts.\n"
+            "Make section 5 (Ace AI) visually prominent — use a colored border-left or background card."
         )
         analysis = gemini.analyze_fleet(report_data, question=prompt)
 
