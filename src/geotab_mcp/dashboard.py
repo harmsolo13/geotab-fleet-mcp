@@ -53,6 +53,7 @@ _TTL = {
     "zones": 300,
     "faults": 120,
     "status": 60,
+    "report": 300,
 }
 
 _cache_store: dict[str, tuple[float, object]] = {}  # key -> (expires_at, data)
@@ -478,10 +479,100 @@ def api_heatmap_data():
 
 # ── Fleet Narrative Report API ───────────────────────────────────────
 
+def _build_fallback_report(report_data: dict, ace_insight: str) -> str:
+    """Build a styled HTML report locally when Gemini is unavailable."""
+    from datetime import date as _date
+    today_str = _date.today().strftime("%B %d, %Y")
+    vs = report_data.get("vehicle_summaries", [])
+    total_dist = sum(v.get("distance_km", 0) for v in vs)
+    total_drive = sum(v.get("driving_hours", 0) for v in vs)
+    total_idle = sum(v.get("idle_hours", 0) for v in vs)
+    total_trips = sum(v.get("trips", 0) for v in vs)
+    max_spd = max((v.get("max_speed_kmh", 0) for v in vs), default=0)
+
+    # Vehicle rows
+    rows = ""
+    for v in vs:
+        rows += (
+            f"<tr><td>{v['name']}</td><td>{v['trips']}</td>"
+            f"<td>{v['distance_km']} km</td><td>{v['driving_hours']}h</td>"
+            f"<td>{v['idle_hours']}h</td><td>{v['max_speed_kmh']} km/h</td></tr>"
+        )
+
+    # Ace section
+    if ace_insight and "unavailable" not in ace_insight.lower():
+        ace_html = (
+            '<div style="border-left:4px solid #a78bfa;background:rgba(167,139,250,0.08);'
+            'padding:16px 20px;border-radius:0 8px 8px 0;margin:16px 0">'
+            f'<h3 style="color:#a78bfa;margin:0 0 8px">Geotab Ace AI Analysis</h3>'
+            f'<div style="white-space:pre-wrap;color:#e8ecf4">{ace_insight}</div></div>'
+        )
+    else:
+        ace_html = (
+            '<div style="border-left:4px solid #5a6478;background:rgba(90,100,120,0.08);'
+            'padding:16px 20px;border-radius:0 8px 8px 0;margin:16px 0">'
+            '<p style="color:#8892a8">Ace AI insights were not available for this report.</p></div>'
+        )
+
+    return f"""
+    <div style="font-family:Inter,sans-serif;max-width:700px;margin:0 auto">
+      <h2 style="color:#4a9eff;border-bottom:2px solid #4a9eff;padding-bottom:8px">
+        Fleet Executive Report — {today_str}</h2>
+      <p style="color:#8892a8">Fleet of <strong>{report_data['fleet_size']}</strong> vehicles.
+        Activity sampled from {len(vs)} vehicles.</p>
+
+      <h3 style="color:#4a9eff">Fleet Overview</h3>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:12px 0">
+        <div style="background:rgba(74,158,255,0.08);padding:12px;border-radius:8px;text-align:center">
+          <div style="font-size:24px;font-weight:700;color:#4a9eff">{total_trips}</div>
+          <div style="color:#8892a8;font-size:12px">Total Trips</div></div>
+        <div style="background:rgba(52,211,153,0.08);padding:12px;border-radius:8px;text-align:center">
+          <div style="font-size:24px;font-weight:700;color:#34d399">{total_dist:.1f} km</div>
+          <div style="color:#8892a8;font-size:12px">Distance</div></div>
+        <div style="background:rgba(251,191,36,0.08);padding:12px;border-radius:8px;text-align:center">
+          <div style="font-size:24px;font-weight:700;color:#fbbf24">{total_drive:.1f}h</div>
+          <div style="color:#8892a8;font-size:12px">Driving Hours</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:0 0 16px">
+        <div style="background:rgba(248,113,113,0.08);padding:12px;border-radius:8px;text-align:center">
+          <div style="font-size:24px;font-weight:700;color:#f87171">{total_idle:.1f}h</div>
+          <div style="color:#8892a8;font-size:12px">Idle Hours</div></div>
+        <div style="background:rgba(167,139,250,0.08);padding:12px;border-radius:8px;text-align:center">
+          <div style="font-size:24px;font-weight:700;color:#a78bfa">{max_spd:.0f}</div>
+          <div style="color:#8892a8;font-size:12px">Max km/h</div></div>
+        <div style="background:rgba(248,113,113,0.08);padding:12px;border-radius:8px;text-align:center">
+          <div style="font-size:24px;font-weight:700;color:#f87171">{report_data['total_faults']}</div>
+          <div style="color:#8892a8;font-size:12px">Active Faults</div></div>
+      </div>
+
+      <h3 style="color:#4a9eff">Vehicle Activity Summary</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;margin:8px 0">
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.1)">
+          <th style="text-align:left;padding:6px;color:#8892a8">Vehicle</th>
+          <th style="text-align:left;padding:6px;color:#8892a8">Trips</th>
+          <th style="text-align:left;padding:6px;color:#8892a8">Distance</th>
+          <th style="text-align:left;padding:6px;color:#8892a8">Drive</th>
+          <th style="text-align:left;padding:6px;color:#8892a8">Idle</th>
+          <th style="text-align:left;padding:6px;color:#8892a8">Max Speed</th>
+        </tr>{rows}</table>
+
+      {ace_html}
+
+      <p style="color:#5a6478;font-size:11px;margin-top:24px;text-align:center">
+        Report generated locally (AI summary unavailable). Refresh to retry AI generation.</p>
+    </div>"""
+
+
 @app.route("/api/report", methods=["POST"])
 def api_report():
     """Generate executive fleet report using Gemini + Ace AI."""
     try:
+        # Return cached report if available
+        _cache_force("report_html")
+        cached_report = _cache_get("report_html")
+        if cached_report:
+            return jsonify(cached_report)
+
         client = _get_client()
         vehicles = _cache_get("vehicles")
         if vehicles is None:
@@ -592,11 +683,26 @@ def api_report():
         )
         analysis = gemini.analyze_fleet(report_data, question=prompt)
 
-        return jsonify({
+        # Check if Gemini succeeded or we need fallback
+        if analysis.get("status") == "success" and analysis.get("analysis"):
+            html = analysis["analysis"]
+            # Strip markdown code fences if Gemini wrapped the HTML
+            html = re.sub(r"^```html?\s*\n?", "", html, flags=re.IGNORECASE)
+            html = re.sub(r"\n?```\s*$", "", html)
+            source = "gemini"
+        else:
+            html = _build_fallback_report(report_data, ace_insight)
+            source = "fallback"
+
+        result = {
             "status": "ok",
-            "html": analysis.get("analysis", "Report generation failed."),
+            "html": html,
             "data": report_data,
-        })
+            "source": source,
+        }
+        # Cache the full report for 5 minutes
+        _cache_set("report_html", result, "report")
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
