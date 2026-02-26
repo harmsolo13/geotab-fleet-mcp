@@ -18,6 +18,7 @@ load_dotenv()
 
 from geotab_mcp.gemini_client import GeminiChat
 from geotab_mcp.geotab_client import GeotabClient
+from geotab_mcp import enrichment
 
 # Resolve paths for templates and static files
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -29,6 +30,9 @@ app = Flask(
     template_folder=str(_TEMPLATE_DIR),
     static_folder=str(_STATIC_DIR),
 )
+
+# Init enrichment DB on import
+enrichment.init_db()
 
 # Shared Geotab client (lazy init)
 _client: GeotabClient | None = None
@@ -118,7 +122,7 @@ def _fetch_vehicles_with_locations() -> list[dict]:
         v["lastUpdated"] = loc.get("dateTime")
         v["isCommunicating"] = loc.get("isDeviceCommunicating")
         enriched.append(v)
-    return enriched
+    return enrichment.enrich_vehicles(enriched)
 
 
 # ── Page Routes ──────────────────────────────────────────────────────────
@@ -625,6 +629,24 @@ def api_chat_clear():
     if session_id in _chat_sessions:
         del _chat_sessions[session_id]
     return jsonify({"status": "cleared", "session_id": session_id})
+
+
+# ── Enrichment Toggle API ────────────────────────────────────────────────
+
+@app.route("/api/enrichment/status")
+def api_enrichment_status():
+    """Check if vehicle enrichment is enabled."""
+    return jsonify({"enabled": enrichment.is_enabled()})
+
+
+@app.route("/api/enrichment/toggle", methods=["POST"])
+def api_enrichment_toggle():
+    """Toggle vehicle enrichment on/off. Busts the vehicle cache."""
+    new_state = enrichment.toggle()
+    # Bust vehicle caches so next load reflects the change
+    _cache_store.pop("api_vehicles", None)
+    _cache_store.pop("vehicles", None)
+    return jsonify({"enabled": new_state})
 
 
 # ── Entry Point ──────────────────────────────────────────────────────────
