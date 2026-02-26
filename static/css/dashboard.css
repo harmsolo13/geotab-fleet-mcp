@@ -942,20 +942,56 @@ select, select option {
     top: 0;
     right: 0;
     width: 480px;
+    min-width: 320px;
+    max-width: 80vw;
     height: 100vh;
     background: var(--bg-panel);
     border-left: 1px solid var(--border-glass);
     z-index: 35;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
     box-shadow: -4px 0 32px rgba(0, 0, 0, 0.4);
     transform: translateX(0);
     transition: transform 0.3s ease;
 }
 
+.slideout-panel.resizing {
+    transition: none;
+    user-select: none;
+}
+
 .slideout-panel.hidden {
     transform: translateX(100%);
     pointer-events: none;
+}
+
+.slideout-resize-handle {
+    position: absolute;
+    top: 0;
+    left: -4px;
+    width: 8px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 36;
+}
+
+.slideout-resize-handle::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 2px;
+    width: 4px;
+    height: 48px;
+    transform: translateY(-50%);
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.15);
+    transition: background 0.2s;
+}
+
+.slideout-resize-handle:hover::after,
+.slideout-panel.resizing .slideout-resize-handle::after {
+    background: var(--accent);
 }
 
 .slideout-header {
@@ -965,6 +1001,8 @@ select, select option {
     padding: 14px 16px;
     border-bottom: 1px solid var(--border-glass);
     flex-shrink: 0;
+    position: relative;
+    z-index: 2;
 }
 
 .slideout-tabs {
@@ -1052,9 +1090,18 @@ select, select option {
 .slideout-body {
     padding: 24px;
     overflow-y: auto;
+    overflow-x: hidden;
     flex: 1;
+    min-width: 0;
     font-size: 14px;
     line-height: 1.6;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.slideout-body * {
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 .slideout-body h1, .slideout-body h2, .slideout-body h3 {
@@ -1066,6 +1113,7 @@ select, select option {
     width: 100%;
     border-collapse: collapse;
     margin: 12px 0;
+    table-layout: fixed;
 }
 
 .slideout-body th, .slideout-body td {
@@ -1110,13 +1158,49 @@ select, select option {
 }
 
 /* Guide content styling in slideout */
-.slideout-body .guide-content h1 { font-size: 20px; }
-.slideout-body .guide-content h2 { font-size: 16px; margin-top: 20px; }
-.slideout-body .guide-content p { margin: 8px 0; }
-.slideout-body .guide-content ul, .slideout-body .guide-content ol { padding-left: 20px; margin: 8px 0; }
+.slideout-body .guide-content {
+    max-width: 100%;
+    width: 100%;
+    padding: 0;
+    position: relative;
+}
+
+.slideout-body .guide-content section {
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+}
+.slideout-body .guide-content h1 { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+.slideout-body .guide-content h2 { font-size: 17px; font-weight: 700; margin: 24px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border-glass); }
+.slideout-body .guide-content h3 { font-size: 14px; font-weight: 600; margin: 14px 0 6px; color: var(--accent-blue); }
+.slideout-body .guide-content .subtitle { color: var(--text-secondary); font-size: 13px; margin-bottom: 24px; }
+.slideout-body .guide-content section { margin-bottom: 32px; }
+.slideout-body .guide-content p { margin: 0 0 10px; color: var(--text-secondary); font-size: 13px; }
+.slideout-body .guide-content ul, .slideout-body .guide-content ol { padding-left: 20px; margin: 0 0 10px; color: var(--text-secondary); }
 .slideout-body .guide-content li { margin: 4px 0; font-size: 13px; }
 .slideout-body .guide-content code { background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
-.slideout-body .guide-content kbd { background: rgba(255,255,255,0.1); padding: 2px 8px; border-radius: 4px; font-size: 11px; border: 1px solid var(--border-glass); }
+.slideout-body .guide-content kbd { display: inline-block; background: rgba(255,255,255,0.1); padding: 2px 7px; border-radius: 4px; font-size: 11px; border: 1px solid var(--border-glass); }
+
+/* Guide callout boxes */
+.slideout-body .guide-content .callout { padding: 10px 14px; border-radius: 8px; margin: 10px 0; font-size: 13px; border-left: 4px solid; }
+.slideout-body .guide-content .callout-tip { background: rgba(74,158,255,0.08); border-color: var(--accent-blue); color: var(--text-secondary); }
+.slideout-body .guide-content .callout-note { background: rgba(167,139,250,0.08); border-color: var(--accent-purple); color: var(--text-secondary); }
+.slideout-body .guide-content .callout strong { color: var(--text-primary); }
+
+/* Guide status dots */
+.slideout-body .guide-content .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+.slideout-body .guide-content .dot-green { background: var(--accent-green); }
+.slideout-body .guide-content .dot-blue { background: var(--accent-blue); }
+.slideout-body .guide-content .dot-yellow { background: var(--accent-yellow); }
+.slideout-body .guide-content .dot-red { background: var(--accent-red); }
+.slideout-body .guide-content .dot-grey { background: var(--text-muted); }
+
+/* Guide field tables */
+.slideout-body .guide-content .field-table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px; table-layout: fixed; }
+.slideout-body .guide-content .field-table th,
+.slideout-body .guide-content .field-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border-glass); word-wrap: break-word; }
+.slideout-body .guide-content .field-table th { color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+.slideout-body .guide-content .field-table td { color: var(--text-secondary); }
 
 [data-theme="light"] .slideout-panel {
     background: #ffffff;
@@ -1134,6 +1218,9 @@ select, select option {
 
 [data-theme="light"] .slideout-body .guide-content code { background: rgba(0,0,0,0.06); }
 [data-theme="light"] .slideout-body .guide-content kbd { background: rgba(0,0,0,0.06); }
+[data-theme="light"] .slideout-body .guide-content .callout-tip { background: rgba(74,158,255,0.06); }
+[data-theme="light"] .slideout-body .guide-content .callout-note { background: rgba(167,139,250,0.06); }
+[data-theme="light"] .slideout-resize-handle::after { background: rgba(0, 0, 0, 0.15); }
 
 /* ── Toast Notifications ────────────────────────────────────────────── */
 
@@ -1435,7 +1522,12 @@ select, select option {
     }
 
     .slideout-panel {
-        width: 100vw;
+        width: 100vw !important;
+        min-width: 0;
+    }
+
+    .slideout-resize-handle {
+        display: none;
     }
 
     .chat-panel {
