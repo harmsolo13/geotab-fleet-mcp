@@ -42,6 +42,34 @@
             </div>
         </div>
 
+        <!-- Fleet KPI Cards -->
+        <div class="kpi-grid" id="kpiGrid">
+            <div class="kpi-card">
+                <span class="kpi-value" id="kpiDistance">--</span>
+                <span class="kpi-label">Total km</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-value" id="kpiTrips">--</span>
+                <span class="kpi-label">Trips</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-value" id="kpiIdle">--</span>
+                <span class="kpi-label">Idle %</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-value" id="kpiDriving">--</span>
+                <span class="kpi-label">Drive hrs</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-value" id="kpiMaxSpeed">--</span>
+                <span class="kpi-label">Max km/h</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-value" id="kpiExceptions">--</span>
+                <span class="kpi-label">Exceptions</span>
+            </div>
+        </div>
+
         <!-- Vehicle List -->
         <div class="section">
             <h2 class="section-title">Vehicles</h2>
@@ -73,6 +101,49 @@
 
     <!-- Map Container -->
     <div id="map"></div>
+
+    <!-- Map Controls (floating on map) -->
+    <div class="map-controls">
+        <button class="map-ctrl-btn" id="heatmapToggle" onclick="toggleHeatmap()" title="Toggle activity heatmap">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+            <span>Heatmap</span>
+        </button>
+        <button class="map-ctrl-btn" id="reportBtn" onclick="generateReport()" title="Generate fleet report">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            <span>Report</span>
+        </button>
+    </div>
+
+    <!-- Report Modal -->
+    <div id="reportModal" class="report-modal hidden">
+        <div class="report-modal-content">
+            <div class="report-modal-header">
+                <h2>Fleet Executive Report</h2>
+                <button class="report-close" onclick="closeReport()">&times;</button>
+            </div>
+            <div class="report-modal-body" id="reportBody">
+                <div class="loading">Generating report...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Trip Replay Controls -->
+    <div id="replayControls" class="replay-controls hidden">
+        <button class="replay-btn" id="replayPlayBtn" onclick="toggleReplay()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        </button>
+        <input type="range" id="replaySlider" class="replay-slider" min="0" max="100" value="0" oninput="seekReplay(this.value)">
+        <select id="replaySpeed" class="replay-speed" onchange="setReplaySpeed(this.value)">
+            <option value="1">1x</option>
+            <option value="2" selected>2x</option>
+            <option value="5">5x</option>
+            <option value="10">10x</option>
+        </select>
+        <button class="replay-close-btn" onclick="closeReplay()">&times;</button>
+    </div>
 
     <!-- Voice Chat Panel -->
     <div id="chatPanel" class="chat-panel collapsed">
@@ -116,7 +187,7 @@
         window.MAPS_API_KEY = "{{ maps_api_key }}";
     </script>
     <script async defer
-        src="https://maps.googleapis.com/maps/api/js?key={{ maps_api_key }}&callback=initMap&libraries=marker">
+        src="https://maps.googleapis.com/maps/api/js?key={{ maps_api_key }}&callback=initMap&libraries=marker,visualization">
     </script>
     <script src="/static/js/fleet-map.js"></script>
 </body>

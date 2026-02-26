@@ -377,6 +377,42 @@ class GeotabClient:
         return msg_id
 
 
+    def get_log_records(
+        self,
+        device_id: str,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        """Get GPS log records (breadcrumb trail) for trip replay."""
+        now = datetime.now(timezone.utc)
+        if from_date is None:
+            from_date = (now - timedelta(days=1)).isoformat()
+        if to_date is None:
+            to_date = now.isoformat()
+
+        records = self.api.get(
+            "LogRecord",
+            search={
+                "deviceSearch": {"id": device_id},
+                "fromDate": from_date,
+                "toDate": to_date,
+            },
+            resultsLimit=limit,
+        )
+        results = []
+        for r in records:
+            lat = r.get("latitude")
+            lng = r.get("longitude")
+            if lat is not None and lng is not None and (lat != 0 or lng != 0):
+                results.append({
+                    "lat": lat,
+                    "lng": lng,
+                    "speed": r.get("speed"),
+                    "dateTime": str(r.get("dateTime", "")),
+                })
+        return results
+
     # ── Geotab Ace AI ────────────────────────────────────────────────
 
     def _ace_call(self, function_name: str, function_params: dict | None = None) -> dict:

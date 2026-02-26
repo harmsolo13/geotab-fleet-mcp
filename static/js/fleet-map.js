@@ -18,6 +18,19 @@ let chatSending = false;
 let recognition = null;
 let isRecording = false;
 
+// Heatmap state
+let heatmapLayer = null;
+let heatmapVisible = false;
+
+// Trip replay state
+let replayPoints = [];
+let replayMarker = null;
+let replayPolyline = null;
+let replayIndex = 0;
+let replayPlaying = false;
+let replayTimer = null;
+let replaySpeedMs = 200; // ms between frames
+
 const REFRESH_INTERVAL = 10000; // 10 seconds
 const DEFAULT_CENTER = { lat: 43.6532, lng: -79.3832 }; // Toronto (Geotab HQ)
 const DEFAULT_ZOOM = 12;
@@ -65,11 +78,13 @@ function initMap() {
     loadVehicles();
     loadZones();
     loadFaults();
+    loadKPIs();
 
     // Start auto-refresh
     refreshTimer = setInterval(() => {
         loadVehicles();
         loadFaults();
+        loadKPIs();
     }, REFRESH_INTERVAL);
 }
 
@@ -128,6 +143,274 @@ async function loadTrips(deviceId) {
         console.error("Failed to load trips:", err);
         return [];
     }
+}
+
+
+// ── Fleet KPIs ─────────────────────────────────────────────────────────
+
+async function loadKPIs() {
+    try {
+        const resp = await fetch("/api/fleet-kpis");
+        const data = await resp.json();
+        if (data.error) return;
+
+        const set = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = val;
+        };
+        set("kpiDistance", data.total_distance_km?.toLocaleString() || "--");
+        set("kpiTrips", data.total_trips?.toLocaleString() || "--");
+        set("kpiIdle", data.idle_percent != null ? data.idle_percent + "%" : "--");
+        set("kpiDriving", data.total_driving_hours?.toLocaleString() || "--");
+        set("kpiMaxSpeed", data.max_speed_kmh?.toLocaleString() || "--");
+        set("kpiExceptions", data.total_exceptions?.toLocaleString() || "--");
+    } catch (err) {
+        console.error("Failed to load KPIs:", err);
+    }
+}
+
+
+// ── Heatmap ────────────────────────────────────────────────────────────
+
+async function loadHeatmapData() {
+    try {
+        const resp = await fetch("/api/heatmap-data");
+        const data = await resp.json();
+        if (data.error || !data.points) return;
+
+        const heatData = data.points.map(p => ({
+            location: new google.maps.LatLng(p.lat, p.lng),
+            weight: p.weight,
+        }));
+
+        if (heatmapLayer) {
+            heatmapLayer.setMap(null);
+        }
+        heatmapLayer = new google.maps.visualization.HeatmapLayer({
+            data: heatData,
+            radius: 30,
+            opacity: 0.7,
+            gradient: [
+                "rgba(0, 0, 0, 0)",
+                "rgba(74, 158, 255, 0.4)",
+                "rgba(52, 211, 153, 0.6)",
+                "rgba(251, 191, 36, 0.8)",
+                "rgba(248, 113, 113, 1)",
+            ],
+        });
+        if (heatmapVisible) {
+            heatmapLayer.setMap(map);
+        }
+        showToast(`Heatmap loaded: ${data.count} activity points`, "info");
+    } catch (err) {
+        console.error("Failed to load heatmap:", err);
+    }
+}
+
+function toggleHeatmap() {
+    const btn = document.getElementById("heatmapToggle");
+    heatmapVisible = !heatmapVisible;
+    btn.classList.toggle("active", heatmapVisible);
+
+    if (heatmapVisible) {
+        if (!heatmapLayer) {
+            loadHeatmapData();
+        } else {
+            heatmapLayer.setMap(map);
+        }
+    } else {
+        if (heatmapLayer) heatmapLayer.setMap(null);
+    }
+}
+
+
+// ── Toast Notifications ────────────────────────────────────────────────
+
+function showToast(message, type = "info", duration = 4000) {
+    const container = document.getElementById("toastContainer");
+    if (!container) return;
+    const toast = document.createElement("div");
+    toast.className = `toast toast-${type}`;
+
+    const icons = {
+        info: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+        success: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+        error: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+        warning: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    };
+    toast.innerHTML = `<span class="toast-icon">${icons[type] || icons.info}</span><span class="toast-msg">${message}</span>`;
+    container.appendChild(toast);
+
+    // Animate in
+    requestAnimationFrame(() => toast.classList.add("show"));
+
+    setTimeout(() => {
+        toast.classList.remove("show");
+        setTimeout(() => toast.remove(), 300);
+    }, duration);
+}
+
+
+// ── Fleet Report ───────────────────────────────────────────────────────
+
+async function generateReport() {
+    const modal = document.getElementById("reportModal");
+    const body = document.getElementById("reportBody");
+    const btn = document.getElementById("reportBtn");
+
+    modal.classList.remove("hidden");
+    body.innerHTML = '<div class="report-loading"><div class="report-spinner"></div><p>Generating executive report...<br><small>Querying Ace AI + Gemini (may take 30-60s)</small></p></div>';
+    btn.classList.add("loading");
+
+    try {
+        const resp = await fetch("/api/report", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+        });
+        const data = await resp.json();
+        btn.classList.remove("loading");
+
+        if (data.error) {
+            body.innerHTML = `<div class="report-error">Error: ${data.error}</div>`;
+            showToast("Report generation failed", "error");
+            return;
+        }
+
+        body.innerHTML = data.html || "<p>No report content generated.</p>";
+        showToast("Fleet report generated successfully", "success");
+    } catch (err) {
+        btn.classList.remove("loading");
+        body.innerHTML = `<div class="report-error">Failed to reach server: ${err.message}</div>`;
+        showToast("Report generation failed", "error");
+    }
+}
+
+function closeReport() {
+    document.getElementById("reportModal").classList.add("hidden");
+}
+
+
+// ── Trip Replay ────────────────────────────────────────────────────────
+
+async function startTripReplay(deviceId, fromDate, toDate) {
+    closeReplay(); // Clean up any existing replay
+    showToast("Loading GPS trail...", "info");
+
+    try {
+        let url = `/api/vehicle/${deviceId}/trip-replay`;
+        const params = [];
+        if (fromDate) params.push(`from=${encodeURIComponent(fromDate)}`);
+        if (toDate) params.push(`to=${encodeURIComponent(toDate)}`);
+        if (params.length) url += "?" + params.join("&");
+
+        const resp = await fetch(url);
+        const data = await resp.json();
+        if (data.error || !data.points || data.points.length < 2) {
+            showToast("Not enough GPS data for replay", "warning");
+            return;
+        }
+
+        replayPoints = data.points;
+        replayIndex = 0;
+
+        // Draw the full path
+        const path = replayPoints.map(p => ({ lat: p.lat, lng: p.lng }));
+        replayPolyline = new google.maps.Polyline({
+            map: map,
+            path: path,
+            strokeColor: "#4a9eff",
+            strokeWeight: 3,
+            strokeOpacity: 0.8,
+        });
+
+        // Animated marker
+        const markerEl = document.createElement("div");
+        markerEl.className = "replay-marker";
+        markerEl.innerHTML = '<span class="replay-dot"></span>';
+        replayMarker = new google.maps.marker.AdvancedMarkerElement({
+            map: map,
+            position: path[0],
+            content: markerEl,
+        });
+
+        // Fit map to path
+        const bounds = new google.maps.LatLngBounds();
+        path.forEach(p => bounds.extend(p));
+        map.fitBounds(bounds, { padding: 60 });
+
+        // Show controls
+        const controls = document.getElementById("replayControls");
+        controls.classList.remove("hidden");
+        const slider = document.getElementById("replaySlider");
+        slider.max = replayPoints.length - 1;
+        slider.value = 0;
+
+        showToast(`Replay loaded: ${data.count} GPS points`, "success");
+    } catch (err) {
+        showToast("Failed to load replay data", "error");
+    }
+}
+
+function toggleReplay() {
+    if (replayPlaying) {
+        pauseReplay();
+    } else {
+        playReplay();
+    }
+}
+
+function playReplay() {
+    if (replayPoints.length === 0) return;
+    replayPlaying = true;
+    const btn = document.getElementById("replayPlayBtn");
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+
+    replayTimer = setInterval(() => {
+        if (replayIndex >= replayPoints.length - 1) {
+            pauseReplay();
+            return;
+        }
+        replayIndex++;
+        updateReplayPosition();
+    }, replaySpeedMs);
+}
+
+function pauseReplay() {
+    replayPlaying = false;
+    if (replayTimer) clearInterval(replayTimer);
+    replayTimer = null;
+    const btn = document.getElementById("replayPlayBtn");
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+}
+
+function seekReplay(val) {
+    replayIndex = parseInt(val);
+    updateReplayPosition();
+}
+
+function setReplaySpeed(val) {
+    const speed = parseFloat(val);
+    replaySpeedMs = Math.round(400 / speed);
+    if (replayPlaying) {
+        pauseReplay();
+        playReplay();
+    }
+}
+
+function updateReplayPosition() {
+    if (!replayMarker || replayIndex >= replayPoints.length) return;
+    const pt = replayPoints[replayIndex];
+    replayMarker.position = { lat: pt.lat, lng: pt.lng };
+    document.getElementById("replaySlider").value = replayIndex;
+}
+
+function closeReplay() {
+    pauseReplay();
+    replayPoints = [];
+    replayIndex = 0;
+    if (replayMarker) { replayMarker.map = null; replayMarker = null; }
+    if (replayPolyline) { replayPolyline.setMap(null); replayPolyline = null; }
+    document.getElementById("replayControls")?.classList.add("hidden");
 }
 
 
@@ -325,8 +608,14 @@ async function selectVehicle(deviceId) {
         html += `<p class="detail-section-title">Recent Trips (${trips.length})</p>`;
         trips.slice(0, 5).forEach(t => {
             const dist = t.distance ? (t.distance / 1000).toFixed(1) + " km" : "N/A";
+            const replayBtn = t.start && t.stop
+                ? `<button class="trip-replay-btn" onclick="event.stopPropagation(); startTripReplay('${deviceId}', '${t.start}', '${t.stop}')" title="Replay trip">&#9654;</button>`
+                : "";
             html += `<div class="trip-item">
-                <div class="trip-time">${formatDateTime(t.start)} &rarr; ${formatDateTime(t.stop)}</div>
+                <div class="trip-header">
+                    <div class="trip-time">${formatDateTime(t.start)} &rarr; ${formatDateTime(t.stop)}</div>
+                    ${replayBtn}
+                </div>
                 <div class="trip-meta">${dist} &mdash; Max ${t.maximumSpeed?.toFixed(0) || "?"} km/h</div>
             </div>`;
         });
@@ -530,6 +819,15 @@ async function sendMessage() {
             appendMessage("assistant", data.response);
             // Update session ID if server assigned one
             if (data.session_id) chatSessionId = data.session_id;
+            // Detect action keywords in response for visual feedback
+            const lower = data.response.toLowerCase();
+            if (lower.includes("zone") && (lower.includes("created") || lower.includes("geofence"))) {
+                showToast("Zone created — refreshing map zones", "success");
+                loadZones();
+            }
+            if (lower.includes("message") && lower.includes("sent")) {
+                showToast("Text message sent to vehicle", "success");
+            }
             // Optional TTS for short responses
             speakResponse(data.response);
         }
