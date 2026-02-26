@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from datetime import date
 
@@ -156,6 +157,40 @@ _GEOTAB_TOOLS = [
             "required": ["question"],
         },
     ),
+    genai_types.FunctionDeclaration(
+        name="create_zone",
+        description=(
+            "Create a new geofence zone on the map. Generates a circular zone polygon "
+            "around the specified latitude/longitude. Use when the user asks to create a "
+            "geofence, zone, or boundary. Example: 'Create a geofence called Depot at 43.6, -79.4'."
+        ),
+        parameters={
+            "type": "OBJECT",
+            "properties": {
+                "name": {"type": "STRING", "description": "Name for the new zone"},
+                "latitude": {"type": "NUMBER", "description": "Center latitude"},
+                "longitude": {"type": "NUMBER", "description": "Center longitude"},
+                "radius_m": {"type": "NUMBER", "description": "Radius in meters (default 200)"},
+                "comment": {"type": "STRING", "description": "Optional comment/description"},
+            },
+            "required": ["name", "latitude", "longitude"],
+        },
+    ),
+    genai_types.FunctionDeclaration(
+        name="send_text_message",
+        description=(
+            "Send a text message to a vehicle's in-cab Geotab device. "
+            "Use when the user wants to message a driver or send an alert to a vehicle."
+        ),
+        parameters={
+            "type": "OBJECT",
+            "properties": {
+                "device_id": {"type": "STRING", "description": "The Geotab device ID to message"},
+                "message": {"type": "STRING", "description": "The message text to send"},
+            },
+            "required": ["device_id", "message"],
+        },
+    ),
 ]
 
 ANALYSIS_PROMPTS = {
@@ -213,7 +248,7 @@ class GeminiClient:
                 config=genai.types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
                     temperature=0.3,
-                    max_output_tokens=2048,
+                    max_output_tokens=8192,
                 ),
             )
             return {
@@ -282,6 +317,33 @@ class GeminiChat:
         self._geotab = geotab_client
         self._tool_config = genai_types.Tool(function_declarations=_GEOTAB_TOOLS)
 
+    def _create_zone_helper(self, args: dict) -> dict:
+        """Create a geofence zone from chat — generates circle polygon."""
+        lat = args["latitude"]
+        lng = args["longitude"]
+        radius = args.get("radius_m", 200)
+        n = 8
+        points = []
+        for i in range(n):
+            angle = 2 * math.pi * i / n
+            dlat = (radius / 111320) * math.cos(angle)
+            dlng = (radius / (111320 * math.cos(math.radians(lat)))) * math.sin(angle)
+            points.append({"x": lng + dlng, "y": lat + dlat})
+
+        zone_id = self._geotab.create_zone(
+            name=args["name"],
+            points=points,
+            comment=args.get("comment", "Created via Fleet Assistant"),
+        )
+        return {
+            "status": "created",
+            "zone_id": zone_id,
+            "name": args["name"],
+            "center": {"lat": lat, "lng": lng},
+            "radius_m": radius,
+            "action": "zone_created",
+        }
+
     def _truncate(self, data: list | dict) -> list | dict:
         """Truncate large results to fit within Gemini context."""
         if isinstance(data, list) and len(data) > self.MAX_ITEMS:
@@ -327,6 +389,11 @@ class GeminiChat:
             "ace_query": lambda a: self._geotab.ace_query(
                 question=a["question"],
                 timeout=a.get("timeout", 90),
+            ),
+            "create_zone": lambda a: self._create_zone_helper(a),
+            "send_text_message": lambda a: self._geotab.send_text_message(
+                device_id=a["device_id"],
+                message=a["message"],
             ),
         }
         fn = dispatch.get(name)

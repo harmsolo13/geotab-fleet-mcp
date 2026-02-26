@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import math
 import os
+import re
 import sys
 import time
 import uuid
@@ -265,6 +268,268 @@ def api_status():
         return jsonify(result)
     except Exception as e:
         return jsonify({"connected": False, "error": str(e)}), 500
+
+
+# ── Helpers ──────────────────────────────────────────────────────────
+
+def _parse_duration(value) -> float:
+    """Parse a timedelta string like '1:23:45' or '0:05:30' into total seconds.
+
+    Also handles plain numeric (already seconds) and timedelta-repr strings.
+    """
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip()
+    if not s or s == "None":
+        return 0.0
+    # Try H:MM:SS or HH:MM:SS
+    m = re.match(r"^(\d+):(\d{2}):(\d{2})(?:\..*)?$", s)
+    if m:
+        return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
+    # Try seconds only
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def _circle_points(lat: float, lng: float, radius_m: float = 200, n: int = 8) -> list[dict]:
+    """Generate n points forming a circle polygon around (lat, lng)."""
+    points = []
+    for i in range(n):
+        angle = 2 * math.pi * i / n
+        dlat = (radius_m / 111320) * math.cos(angle)
+        dlng = (radius_m / (111320 * math.cos(math.radians(lat)))) * math.sin(angle)
+        points.append({"x": lng + dlng, "y": lat + dlat})
+    return points
+
+
+# ── Fleet KPI API ────────────────────────────────────────────────────
+
+@app.route("/api/fleet-kpis")
+def api_fleet_kpis():
+    """Aggregated fleet KPIs from trip data (cached)."""
+    cache_key = "api_fleet_kpis"
+    _cache_force(cache_key)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+    try:
+        client = _get_client()
+        vehicles = _cache_get("vehicles")
+        if vehicles is None:
+            vehicles = client.get_vehicles(limit=500)
+            _cache_set("vehicles", vehicles, "vehicles")
+
+        total_distance = 0.0
+        total_trips = 0
+        total_driving_s = 0.0
+        total_idle_s = 0.0
+        max_speed = 0.0
+        vehicles_with_trips = 0
+
+        # Sample trips from up to 50 vehicles
+        for v in vehicles[:50]:
+            try:
+                trips = client.get_trips(device_id=v["id"], limit=20)
+                if trips:
+                    vehicles_with_trips += 1
+                    total_trips += len(trips)
+                    for t in trips:
+                        total_distance += t.get("distance") or 0
+                        total_driving_s += _parse_duration(t.get("drivingDuration"))
+                        total_idle_s += _parse_duration(t.get("idlingDuration"))
+                        ms = t.get("maximumSpeed") or 0
+                        if ms > max_speed:
+                            max_speed = ms
+            except Exception:
+                continue
+
+        total_active_s = total_driving_s + total_idle_s
+        idle_pct = (total_idle_s / total_active_s * 100) if total_active_s > 0 else 0
+
+        # Exception events count
+        exceptions_result = _cache_get("api_exceptions_all")
+        if exceptions_result is None:
+            try:
+                exceptions = client.get_exception_events(limit=500)
+                exceptions_result = {"count": len(exceptions)}
+                _cache_set("api_exceptions_all", exceptions_result, "faults")
+            except Exception:
+                exceptions_result = {"count": 0}
+
+        result = {
+            "total_distance_km": round(total_distance / 1000, 1),
+            "total_trips": total_trips,
+            "idle_percent": round(idle_pct, 1),
+            "total_driving_hours": round(total_driving_s / 3600, 1),
+            "max_speed_kmh": round(max_speed, 1),
+            "vehicles_with_trips": vehicles_with_trips,
+            "total_exceptions": exceptions_result["count"],
+            "avg_trips_per_vehicle": round(total_trips / max(vehicles_with_trips, 1), 1),
+        }
+        _cache_set(cache_key, result, "trips")
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── Heatmap API ──────────────────────────────────────────────────────
+
+@app.route("/api/heatmap-data")
+def api_heatmap_data():
+    """Trip stop points with duration weights for heatmap visualization."""
+    cache_key = "api_heatmap"
+    _cache_force(cache_key)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+    try:
+        client = _get_client()
+        vehicles = _cache_get("vehicles")
+        if vehicles is None:
+            vehicles = client.get_vehicles(limit=500)
+            _cache_set("vehicles", vehicles, "vehicles")
+
+        points = []
+        for v in vehicles[:50]:
+            try:
+                trips = client.get_trips(device_id=v["id"], limit=20)
+                for t in trips:
+                    sp = t.get("stopPoint")
+                    if sp and sp.get("x") is not None and sp.get("y") is not None:
+                        stop_s = _parse_duration(t.get("stopDuration"))
+                        weight = max(1, min(10, stop_s / 600))  # 10min = weight 1, 100min = weight 10
+                        points.append({
+                            "lat": sp["y"],
+                            "lng": sp["x"],
+                            "weight": round(weight, 1),
+                        })
+            except Exception:
+                continue
+
+        result = {"count": len(points), "points": points}
+        _cache_set(cache_key, result, "trips")
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── Fleet Narrative Report API ───────────────────────────────────────
+
+@app.route("/api/report", methods=["POST"])
+def api_report():
+    """Generate executive fleet report using Gemini + Ace AI."""
+    try:
+        client = _get_client()
+        vehicles = _cache_get("vehicles")
+        if vehicles is None:
+            vehicles = client.get_vehicles(limit=500)
+            _cache_set("vehicles", vehicles, "vehicles")
+
+        # Gather trip summaries per vehicle
+        vehicle_summaries = []
+        for v in vehicles[:30]:
+            try:
+                trips = client.get_trips(device_id=v["id"], limit=20)
+                if not trips:
+                    continue
+                total_dist = sum(t.get("distance") or 0 for t in trips)
+                total_drive = sum(_parse_duration(t.get("drivingDuration")) for t in trips)
+                total_idle = sum(_parse_duration(t.get("idlingDuration")) for t in trips)
+                max_spd = max((t.get("maximumSpeed") or 0) for t in trips)
+                vehicle_summaries.append({
+                    "name": v.get("name", v["id"]),
+                    "trips": len(trips),
+                    "distance_km": round(total_dist / 1000, 1),
+                    "driving_hours": round(total_drive / 3600, 1),
+                    "idle_hours": round(total_idle / 3600, 1),
+                    "max_speed_kmh": round(max_spd, 1),
+                })
+            except Exception:
+                continue
+
+        # Get faults
+        faults_data = _cache_get("api_faults_all")
+        if faults_data is None:
+            try:
+                fault_list = client.get_faults(limit=200)
+                faults_data = {"count": len(fault_list), "faults": fault_list[:20]}
+                _cache_set("api_faults_all", faults_data, "faults")
+            except Exception:
+                faults_data = {"count": 0, "faults": []}
+
+        # Query Ace AI for fleet insights
+        ace_insight = ""
+        try:
+            ace_result = client.ace_query(
+                "Summarize the fleet's overall performance, top concerns, and key recommendations.",
+                timeout=60,
+            )
+            if ace_result.get("status") == "complete":
+                ace_insight = ace_result.get("answer", "")
+        except Exception:
+            ace_insight = "Ace AI was unavailable for this report."
+
+        # Build data payload for Gemini
+        report_data = {
+            "fleet_size": len(vehicles),
+            "vehicles_with_activity": len(vehicle_summaries),
+            "vehicle_summaries": vehicle_summaries[:20],
+            "total_faults": faults_data["count"],
+            "sample_faults": faults_data.get("faults", [])[:10],
+            "ace_insights": ace_insight,
+        }
+
+        # Ask Gemini to generate the report
+        from geotab_mcp.gemini_client import GeminiClient
+        gemini = GeminiClient()
+        prompt = (
+            "Generate a professional HTML executive fleet report. "
+            "Use the following structure with styled HTML (inline CSS, modern look, no external deps):\n"
+            "1. Executive Summary (2-3 sentences)\n"
+            "2. Fleet Overview (vehicle count, total distance, trips, driving hours)\n"
+            "3. Top Performers (highest distance, most trips)\n"
+            "4. Anomalies & Concerns (high idle, faults, excessive speed)\n"
+            "5. Ace AI Insights (include the Ace analysis below)\n"
+            "6. Recommendations (3-5 actionable items)\n\n"
+            "Use a clean, modern style. Return ONLY the HTML body content (no <html>/<head> tags). "
+            "Use colors: blue #4a9eff for headers, green #34d399 for positive, red #f87171 for alerts."
+        )
+        analysis = gemini.analyze_fleet(report_data, question=prompt)
+
+        return jsonify({
+            "status": "ok",
+            "html": analysis.get("analysis", "Report generation failed."),
+            "data": report_data,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── Trip Replay API ──────────────────────────────────────────────────
+
+@app.route("/api/vehicle/<device_id>/trip-replay")
+def api_trip_replay(device_id: str):
+    """Get GPS log records for animated trip replay."""
+    from_date = request.args.get("from")
+    to_date = request.args.get("to")
+    cache_key = f"replay_{device_id}_{from_date}_{to_date}"
+    _cache_force(cache_key)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+    try:
+        records = _get_client().get_log_records(
+            device_id=device_id, from_date=from_date, to_date=to_date, limit=500
+        )
+        result = {"count": len(records), "points": records}
+        _cache_set(cache_key, result, "trips")
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ── Ace AI API ───────────────────────────────────────────────────────
