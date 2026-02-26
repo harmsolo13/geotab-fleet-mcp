@@ -59,35 +59,59 @@ const MAP_STYLES = document.documentElement.dataset.theme === "light" ? MAP_STYL
 
 // ── Map Initialization ──────────────────────────────────────────────────
 
-function initMap() {
-    map = new google.maps.Map(document.getElementById("map"), {
-        center: DEFAULT_CENTER,
-        zoom: DEFAULT_ZOOM,
-        styles: MAP_STYLES,
-        disableDefaultUI: false,
-        zoomControl: true,
-        zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP },
-        mapTypeControl: false,
-        streetViewControl: false,
-        fullscreenControl: true,
-        fullscreenControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP },
-        mapId: "fleet-dashboard-map",
-    });
+let mapInitialized = false;
+let dataLoaded = false;
 
-    // Load initial data (KPIs delayed to avoid blocking vehicle load)
+function initMap() {
+    try {
+        map = new google.maps.Map(document.getElementById("map"), {
+            center: DEFAULT_CENTER,
+            zoom: DEFAULT_ZOOM,
+            styles: MAP_STYLES,
+            disableDefaultUI: false,
+            zoomControl: true,
+            zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP },
+            mapTypeControl: false,
+            streetViewControl: false,
+            fullscreenControl: true,
+            fullscreenControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP },
+            mapId: "fleet-dashboard-map",
+        });
+        mapInitialized = true;
+    } catch (err) {
+        console.error("Map init error:", err);
+    }
+
+    // Load data (avoid double-load if fallback already started)
+    if (!dataLoaded) startDataLoading();
+}
+
+function startDataLoading() {
+    if (dataLoaded) return;
+    dataLoaded = true;
+
     loadVehicles();
     loadZones();
     loadFaults();
-    setTimeout(loadKPIs, 3000); // delay KPIs so vehicle data loads first
+    setTimeout(loadKPIs, 3000);
 
-    // Start auto-refresh
+    // Auto-refresh cycles
     refreshTimer = setInterval(() => {
         loadVehicles();
         loadFaults();
     }, REFRESH_INTERVAL);
-    // KPIs refresh on a slower cycle (every 60s) since they're expensive
     setInterval(loadKPIs, 60000);
 }
+
+// Fallback: if Google Maps fails to load, still load data after 5s
+document.addEventListener("DOMContentLoaded", () => {
+    setTimeout(() => {
+        if (!dataLoaded) {
+            console.warn("Google Maps callback not fired — loading data without map");
+            startDataLoading();
+        }
+    }, 5000);
+});
 
 
 // ── Data Loading ────────────────────────────────────────────────────────
@@ -536,6 +560,7 @@ function closeReplay() {
 // ── Map Markers ─────────────────────────────────────────────────────────
 
 function updateMarkers() {
+    if (!map) return; // Map not initialized yet
     const validVehicles = vehicles.filter(v => v.latitude != null && v.longitude != null);
 
     // Remove markers for vehicles no longer in data
@@ -607,6 +632,7 @@ function getVehicleStatus(vehicle) {
 // ── Zone Drawing ────────────────────────────────────────────────────────
 
 function drawZones(zones) {
+    if (!map) return; // Map not initialized yet
     // Clear existing
     zonePolygons.forEach(p => p.setMap(null));
     zonePolygons = [];
@@ -634,6 +660,7 @@ function drawZones(zones) {
 // ── Trip Drawing ────────────────────────────────────────────────────────
 
 function drawTrips(trips) {
+    if (!map) return; // Map not initialized yet
     // Clear existing
     tripPolylines.forEach(p => p.setMap(null));
     tripPolylines = [];
@@ -704,13 +731,18 @@ async function selectVehicle(deviceId) {
             ${vehicle.speed ? ` &mdash; ${vehicle.speed.toFixed(1)} km/h` : ""}
         </p>
 
-        <div class="detail-row"><span class="label">Device ID</span><span class="value">${vehicle.id}</span></div>
-        <div class="detail-row"><span class="label">VIN</span><span class="value">${vehicle.vin || "N/A"}</span></div>
+        ${vehicle.driver_name ? `<div class="detail-row"><span class="label">Driver</span><span class="value">${vehicle.driver_name}</span></div>` : ""}
+        ${vehicle.department ? `<div class="detail-row"><span class="label">Department</span><span class="value">${vehicle.department}</span></div>` : ""}
         <div class="detail-row"><span class="label">Make/Model</span><span class="value">${[vehicle.make, vehicle.model].filter(Boolean).join(" ") || "N/A"}</span></div>
         <div class="detail-row"><span class="label">Year</span><span class="value">${vehicle.year || "N/A"}</span></div>
+        ${vehicle.vehicle_type ? `<div class="detail-row"><span class="label">Type</span><span class="value">${vehicle.vehicle_type}</span></div>` : ""}
+        ${vehicle.color ? `<div class="detail-row"><span class="label">Color</span><span class="value">${vehicle.color}</span></div>` : ""}
+        ${vehicle.fuel_type ? `<div class="detail-row"><span class="label">Fuel</span><span class="value">${vehicle.fuel_type}</span></div>` : ""}
+        <div class="detail-row"><span class="label">VIN</span><span class="value">${vehicle.vin || "N/A"}</span></div>
         <div class="detail-row"><span class="label">Odometer</span><span class="value">${vehicle.odometer ? Math.round(vehicle.odometer).toLocaleString() + " km" : "N/A"}</span></div>
         <div class="detail-row"><span class="label">Engine Hours</span><span class="value">${vehicle.engineHours ? Math.round(vehicle.engineHours).toLocaleString() + " h" : "N/A"}</span></div>
         <div class="detail-row"><span class="label">Lat / Lng</span><span class="value">${vehicle.latitude?.toFixed(4) || "?"}, ${vehicle.longitude?.toFixed(4) || "?"}</span></div>
+        <div class="detail-row"><span class="label">Device ID</span><span class="value" style="font-size:11px;opacity:0.6">${vehicle.id}</span></div>
     `;
 
     if (deviceFaults.length > 0) {
@@ -764,7 +796,11 @@ function updateVehicleList() {
     const search = document.getElementById("vehicleSearch").value.toLowerCase();
 
     const filtered = vehicles.filter(v =>
-        !search || (v.name || "").toLowerCase().includes(search) || (v.id || "").toLowerCase().includes(search)
+        !search || (v.name || "").toLowerCase().includes(search)
+        || (v.id || "").toLowerCase().includes(search)
+        || (v.driver_name || "").toLowerCase().includes(search)
+        || (v.department || "").toLowerCase().includes(search)
+        || (v.make || "").toLowerCase().includes(search)
     );
 
     if (filtered.length === 0) {
@@ -776,6 +812,7 @@ function updateVehicleList() {
         const status = getVehicleStatus(v);
         const speed = v.speed ? `${v.speed.toFixed(0)} km/h` : "";
         const meta = [v.make, v.model].filter(Boolean).join(" ") || v.vin || v.id;
+        const driverLine = v.driver_name ? `<div class="vehicle-driver">${v.driver_name}${v.department ? ` · ${v.department}` : ""}</div>` : "";
         return `
             <div class="vehicle-item ${selectedVehicle === v.id ? "selected" : ""}"
                  data-id="${v.id}"
@@ -784,6 +821,7 @@ function updateVehicleList() {
                 <div class="vehicle-info">
                     <div class="vehicle-name">${v.name || v.id}</div>
                     <div class="vehicle-meta">${meta}</div>
+                    ${driverLine}
                 </div>
                 <span class="vehicle-speed">${speed}</span>
             </div>

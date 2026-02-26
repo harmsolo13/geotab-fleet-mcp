@@ -296,6 +296,13 @@ body {
     color: var(--text-secondary);
 }
 
+.vehicle-driver {
+    font-size: 10px;
+    color: var(--accent);
+    opacity: 0.8;
+    margin-top: 1px;
+}
+
 .vehicle-speed {
     font-size: 12px;
     font-weight: 600;
