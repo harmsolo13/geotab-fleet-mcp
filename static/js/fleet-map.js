@@ -360,7 +360,11 @@ async function generateReport() {
         html = html.replace(/^```html?\s*\n?/i, "").replace(/\n?```\s*$/g, "");
         body.innerHTML = html;
         actions.style.display = "flex";
-        showToast("Fleet report generated successfully", "success");
+        if (data.source === "fallback") {
+            showToast("Report generated from cached data (AI unavailable)", "warning");
+        } else {
+            showToast("Fleet report generated successfully", "success");
+        }
     } catch (err) {
         btn.classList.remove("loading");
         body.innerHTML = `<div class="report-error">Failed to reach server: ${err.message}</div>`;
