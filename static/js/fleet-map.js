@@ -18,6 +18,10 @@ let chatSending = false;
 let recognition = null;
 let isRecording = false;
 
+// Map view controls
+let viewLocked = false;   // Prevents auto-pan/zoom on data refresh
+let soloMode = false;     // Show only selected vehicle's marker
+
 // Heatmap state
 let heatmapLayer = null;
 let heatmapVisible = false;
@@ -246,6 +250,47 @@ function toggleHeatmap() {
     } else {
         if (heatmapLayer) heatmapLayer.setMap(null);
     }
+}
+
+
+// ── Map View Controls ──────────────────────────────────────────────────
+
+function toggleViewLock() {
+    viewLocked = !viewLocked;
+    const btn = document.getElementById("lockViewToggle");
+    btn.classList.toggle("active", viewLocked);
+    showToast(viewLocked ? "Map view locked" : "Map view unlocked", "info", 2000);
+}
+
+function toggleSoloMode() {
+    soloMode = !soloMode;
+    const btn = document.getElementById("soloModeToggle");
+    btn.classList.toggle("active", soloMode);
+
+    if (soloMode && selectedVehicle) {
+        // Hide all markers except selected
+        for (const id in markers) {
+            markers[id].map = id === selectedVehicle ? map : null;
+        }
+        showToast("Solo view — showing selected vehicle only", "info", 2000);
+    } else {
+        // Show all markers
+        for (const id in markers) markers[id].map = map;
+        showToast("Showing all vehicles", "info", 2000);
+    }
+}
+
+function fitAllVehicles() {
+    if (!map) return;
+    const bounds = new google.maps.LatLngBounds();
+    let any = false;
+    vehicles.forEach(v => {
+        if (v.latitude && v.longitude) {
+            bounds.extend({ lat: v.latitude, lng: v.longitude });
+            any = true;
+        }
+    });
+    if (any) map.fitBounds(bounds, { padding: 60 });
 }
 
 
@@ -582,9 +627,13 @@ function updateMarkers() {
         bounds.extend(pos);
         hasValidBounds = true;
 
+        // Solo mode: hide all markers except the selected vehicle
+        const visible = !soloMode || !selectedVehicle || v.id === selectedVehicle;
+
         if (markers[v.id]) {
             // Update existing marker position
             markers[v.id].position = pos;
+            markers[v.id].map = visible ? map : null;
             // Update content
             const el = markers[v.id].content;
             if (el) {
@@ -601,7 +650,7 @@ function updateMarkers() {
             `;
 
             const marker = new google.maps.marker.AdvancedMarkerElement({
-                map: map,
+                map: visible ? map : null,
                 position: pos,
                 content: markerEl,
                 title: v.name || v.id,
@@ -612,8 +661,8 @@ function updateMarkers() {
         }
     });
 
-    // Fit map to show all markers on first load
-    if (hasValidBounds && Object.keys(markers).length === validVehicles.length && !selectedVehicle) {
+    // Fit map to show all markers on first load (skip if view is locked)
+    if (!viewLocked && hasValidBounds && Object.keys(markers).length === validVehicles.length && !selectedVehicle) {
         map.fitBounds(bounds, { padding: 60 });
     }
 }
@@ -704,11 +753,14 @@ async function selectVehicle(deviceId) {
         el.classList.toggle("selected", el.dataset.id === deviceId);
     });
 
-    // Pan map to vehicle
-    if (vehicle.latitude && vehicle.longitude) {
+    // Pan map to vehicle (unless view is locked)
+    if (!viewLocked && vehicle.latitude && vehicle.longitude) {
         map.panTo({ lat: vehicle.latitude, lng: vehicle.longitude });
         map.setZoom(15);
     }
+
+    // Refresh marker visibility for solo mode
+    if (soloMode) updateMarkers();
 
     // Load trips
     const trips = await loadTrips(deviceId);
@@ -779,6 +831,11 @@ async function selectVehicle(deviceId) {
 function closeDetail() {
     document.getElementById("detailPanel").classList.add("hidden");
     selectedVehicle = null;
+
+    // Restore all markers if solo mode was on
+    if (soloMode) {
+        for (const id in markers) markers[id].map = map;
+    }
 
     // Clear trip overlays
     tripPolylines.forEach(p => p.setMap(null));
