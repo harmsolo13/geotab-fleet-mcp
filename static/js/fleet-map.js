@@ -327,8 +327,10 @@ async function generateReport() {
     const modal = document.getElementById("reportModal");
     const body = document.getElementById("reportBody");
     const btn = document.getElementById("reportBtn");
+    const actions = document.getElementById("reportActions");
 
     modal.classList.remove("hidden");
+    actions.style.display = "none";
     body.innerHTML = '<div class="report-loading"><div class="report-spinner"></div><p>Generating executive report...<br><small>Querying Ace AI + Gemini (may take 30-60s)</small></p></div>';
     btn.classList.add("loading");
 
@@ -347,6 +349,7 @@ async function generateReport() {
         }
 
         body.innerHTML = data.html || "<p>No report content generated.</p>";
+        actions.style.display = "flex";
         showToast("Fleet report generated successfully", "success");
     } catch (err) {
         btn.classList.remove("loading");
@@ -357,6 +360,67 @@ async function generateReport() {
 
 function closeReport() {
     document.getElementById("reportModal").classList.add("hidden");
+    document.getElementById("reportActions").style.display = "none";
+}
+
+function _getReportHTML() {
+    const content = document.getElementById("reportBody").innerHTML;
+    const timestamp = new Date().toLocaleString();
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fleet Executive Report — ${timestamp}</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 900px; margin: 40px auto; padding: 0 24px; color: #1a1d23; line-height: 1.6; }
+  h1, h2, h3 { color: #2b7de9; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; font-size: 13px; }
+  th { font-weight: 600; color: #5a6478; text-transform: uppercase; font-size: 11px; }
+  .report-footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 11px; color: #8892a8; }
+</style>
+</head>
+<body>
+${content}
+<div class="report-footer">Generated ${timestamp} — Fleet Command Center powered by Geotab + Gemini AI + Ace AI</div>
+</body>
+</html>`;
+}
+
+function exportReportHTML() {
+    const html = _getReportHTML();
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `fleet-report-${new Date().toISOString().slice(0, 10)}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast("Report saved as HTML", "success");
+}
+
+function exportReportPDF() {
+    // Open a print-friendly window and trigger print-to-PDF
+    const html = _getReportHTML();
+    const win = window.open("", "_blank");
+    win.document.write(html);
+    win.document.close();
+    // Small delay for rendering before triggering print
+    setTimeout(() => {
+        win.print();
+    }, 400);
+    showToast("Print dialog opened — choose 'Save as PDF'", "info");
+}
+
+function printReport() {
+    const html = _getReportHTML();
+    const win = window.open("", "_blank");
+    win.document.write(html);
+    win.document.close();
+    setTimeout(() => {
+        win.print();
+    }, 400);
 }
 
 
