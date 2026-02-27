@@ -1264,8 +1264,22 @@ async function sendMessage() {
         return;
     }
     if (lower.includes("play") && lower.includes("demo") || lower === "demo" || lower === "start demo" || lower === "run demo") {
-        appendMessage("assistant", "Starting the Fleet Command Center demo. Sit back and enjoy the tour!");
-        setTimeout(() => runDemo(), 1500);
+        const introText = "Starting the Fleet Command Center demo. Sit back and enjoy the tour! Leda from Google Gemini will run you through the functions of the system.";
+        appendMessage("assistant", introText);
+
+        // Build demo steps early so we can pre-cache all audio from disk
+        if (typeof buildDemoSteps === "function") buildDemoSteps();
+        if (typeof demoPreCacheAudio === "function") {
+            const introClean = introText.replace(/\*\*/g, "").replace(/`/g, "").replace(/\n+/g, ". ");
+            demoPreCacheAudio([{ text: introClean, voice: "assistant" }]);
+        }
+
+        // Speak intro with assistant voice (pre-recorded on disk), then start demo
+        if (typeof demoSpeak === "function") {
+            demoSpeak(introText, () => runDemo(), "assistant");
+        } else {
+            setTimeout(() => runDemo(), 1500);
+        }
         return;
     }
     if (lower === "stop demo" || lower === "end demo") {
@@ -1429,6 +1443,23 @@ function stopVoice() {
 // ── TTS (Text-to-Speech) ──────────────────────────────────────────────
 
 function speakResponse(text) {
+    // During demo — use browser speech for instant playback (no 8s TTS lag)
+    if (typeof demoRunning !== "undefined" && demoRunning) {
+        if (window.speechSynthesis && text.length <= 800) {
+            const clean = text.replace(/\*\*/g, "").replace(/`/g, "").replace(/\n+/g, ". ");
+            speechSynthesis.cancel();
+            const u = new SpeechSynthesisUtterance(clean);
+            u.rate = 1.0; u.pitch = 1; u.volume = 0.9;
+            const voices = speechSynthesis.getVoices();
+            const male = voices.find(v => v.lang.startsWith("en") && (v.name.includes("Male") || v.name.includes("Daniel") || v.name.includes("James")))
+                || voices.find(v => v.lang.startsWith("en") && !v.localService)
+                || voices.find(v => v.lang.startsWith("en"));
+            if (male) u.voice = male;
+            speechSynthesis.speak(u);
+        }
+        return;
+    }
+
     if (!window.speechSynthesis) return;
     // Only speak short responses to avoid long robot monologues
     if (text.length > 500) return;

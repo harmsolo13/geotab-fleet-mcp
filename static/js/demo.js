@@ -78,53 +78,145 @@ function removeDemoOverlay() {
     }
 }
 
-// ── TTS Narration (Piper via /api/tts, fallback to browser) ───────────
+// ── TTS Narration (Gemini via /api/tts, fallback to browser) ───────────
 
 let demoAudio = null;
-let demoPiperAvailable = null; // null = unknown, true/false after first call
+const _ttsCache = new Map(); // "voice:text" → Blob
 
-function demoSpeak(text, onEnd) {
-    const clean = text.replace(/\*\*/g, "").replace(/`/g, "").replace(/\n+/g, ". ");
+function _ttsCacheKey(text, voice) {
+    return voice + ":" + text;
+}
 
-    // Try Piper first (unless we know it's unavailable)
-    if (demoPiperAvailable !== false) {
-        // Stop any playing audio
-        if (demoAudio) { demoAudio.pause(); demoAudio = null; }
-        if (window.speechSynthesis) speechSynthesis.cancel();
+// Collect all demo narration lines for pre-caching
+function _collectDemoLines(extraLines) {
+    const lines = [...(extraLines || [])];
+    if (DEMO_STEPS.length) {
+        for (const step of DEMO_STEPS) {
+            if (step.narration) {
+                const clean = step.narration.replace(/\*\*/g, "").replace(/`/g, "").replace(/\n+/g, ". ");
+                lines.push({ text: clean, voice: "narrator" });
+            }
+        }
+    }
+    return lines;
+}
 
+// Pre-cache audio into client-side blob cache (for lines already on server disk)
+function demoPreCacheAudio(extraLines) {
+    const lines = _collectDemoLines(extraLines);
+    // Fetch all from server — pre-recorded lines return instantly from disk
+    for (const { text, voice } of lines) {
+        const key = _ttsCacheKey(text, voice);
+        if (_ttsCache.has(key)) continue;
+        _ttsCache.set(key, null); // placeholder
         fetch("/api/tts", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: clean, speed: 1.0 }),
+            body: JSON.stringify({ text, voice }),
         })
-        .then(resp => {
-            if (!resp.ok) throw new Error("TTS unavailable");
-            demoPiperAvailable = true;
-            return resp.blob();
-        })
-        .then(blob => {
-            const url = URL.createObjectURL(blob);
-            demoAudio = new Audio(url);
-            demoAudio.onended = () => {
-                URL.revokeObjectURL(url);
-                demoAudio = null;
-                if (onEnd) onEnd();
-            };
-            demoAudio.onerror = () => {
-                URL.revokeObjectURL(url);
-                demoAudio = null;
-                if (onEnd) onEnd();
-            };
-            demoAudio.play();
-        })
-        .catch(() => {
-            // Piper not available — fall back to browser TTS
-            demoPiperAvailable = false;
-            demoSpeakBrowser(clean, onEnd);
-        });
-    } else {
-        demoSpeakBrowser(clean, onEnd);
+        .then(resp => resp.ok ? resp.blob() : null)
+        .then(blob => { if (blob) _ttsCache.set(key, blob); })
+        .catch(() => { _ttsCache.delete(key); });
     }
+}
+
+// Pre-record all narrator lines to server disk via warmup endpoint
+// Call this once before demo — lines persist across restarts
+function demoWarmUp() {
+    if (!DEMO_STEPS.length) buildDemoSteps();
+    const lines = _collectDemoLines([]);
+    // Add the AI intro line
+    const introClean = "Starting the Fleet Command Center demo. Sit back and enjoy the tour! Leda from Google Gemini will run you through the functions of the system.";
+    lines.push({ text: introClean, voice: "assistant" });
+
+    showToast("Pre-recording demo voices...", "info", 60000);
+    fetch("/api/tts/warmup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lines }),
+    })
+    .then(resp => resp.json())
+    .then(data => {
+        showToast(`Voices ready: ${data.cached} cached, ${data.generated} generated, ${data.failed} failed`, "success", 5000);
+    })
+    .catch(err => {
+        showToast("Warmup failed: " + err.message, "error", 5000);
+    });
+}
+
+function demoSpeak(text, onEnd, voice) {
+    const clean = text.replace(/\*\*/g, "").replace(/`/g, "").replace(/\n+/g, ". ");
+    const voiceName = voice || "narrator";
+
+    // Stop any playing audio
+    if (demoAudio) { demoAudio.pause(); demoAudio = null; }
+    if (window.speechSynthesis) speechSynthesis.cancel();
+
+    // Check pre-cache first for instant playback
+    const key = _ttsCacheKey(clean, voiceName);
+    const cached = _ttsCache.get(key);
+    if (cached) {
+        _playBlob(cached, onEnd);
+        return;
+    }
+
+    // If placeholder exists (in-flight), wait up to 15s for it
+    if (_ttsCache.has(key) && cached === null) {
+        let waited = 0;
+        const pollCache = () => {
+            const blob = _ttsCache.get(key);
+            if (blob) { _playBlob(blob, onEnd); return; }
+            waited += 300;
+            if (waited < 15000) { setTimeout(pollCache, 300); return; }
+            // Timed out — fetch directly
+            _fetchAndPlay(clean, voiceName, key, onEnd);
+        };
+        setTimeout(pollCache, 300);
+        return;
+    }
+
+    // Not cached — fetch and play
+    _fetchAndPlay(clean, voiceName, key, onEnd);
+}
+
+function _fetchAndPlay(text, voice, key, onEnd) {
+    fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, voice }),
+    })
+    .then(resp => {
+        if (!resp.ok) throw new Error("TTS unavailable");
+        return resp.blob();
+    })
+    .then(blob => {
+        _ttsCache.set(key, blob);
+        _playBlob(blob, onEnd);
+    })
+    .catch(() => {
+        demoSpeakBrowser(text, onEnd);
+    });
+}
+
+function _playBlob(blob, onEnd) {
+    const url = URL.createObjectURL(blob);
+    demoAudio = new Audio(url);
+    demoAudio.onended = () => {
+        URL.revokeObjectURL(url);
+        demoAudio = null;
+        if (onEnd) onEnd();
+    };
+    demoAudio.onerror = () => {
+        URL.revokeObjectURL(url);
+        demoAudio = null;
+        if (onEnd) onEnd();
+    };
+    demoAudio.play();
+}
+
+// Speak with the AI assistant voice (used for chat responses during demo)
+function demoSpeakAI(text, onEnd) {
+    demoSpeak(text, onEnd, "assistant");
 }
 
 function demoSpeakBrowser(text, onEnd) {
@@ -154,7 +246,9 @@ function demoSpeakBrowser(text, onEnd) {
 const DEMO_STEPS = [];
 
 function demoStep(label, narration, action, pauseAfter) {
-    DEMO_STEPS.push({ label, narration, action, pauseAfter: pauseAfter || 0 });
+    // Default 1s gap after narrated steps for natural pacing
+    const pause = (pauseAfter != null && pauseAfter > 0) ? pauseAfter : (narration ? 1000 : 0);
+    DEMO_STEPS.push({ label, narration, action, pauseAfter: pause });
 }
 
 function runNextDemoStep() {
@@ -182,6 +276,33 @@ function runNextDemoStep() {
 
     // Execute the action
     if (step.action) step.action();
+
+    // If step has a waitFor condition, poll until it's met before advancing
+    if (step.waitFor) {
+        const started = Date.now();
+        const maxWait = step.waitTimeout || 45000;
+        const pollWait = () => {
+            if (!demoRunning) return;
+            if (step.waitFor() || Date.now() - started > maxWait) {
+                runNextDemoStep();
+            } else {
+                const t = setTimeout(pollWait, 1000);
+                demoTimeouts.push(t);
+            }
+        };
+        // Start polling after narration finishes (or immediately if no narration)
+        if (step.narration) {
+            demoSpeak(step.narration, () => {
+                if (!demoRunning) return;
+                const t = setTimeout(pollWait, step.pauseAfter);
+                demoTimeouts.push(t);
+            });
+        } else {
+            const t = setTimeout(pollWait, 500);
+            demoTimeouts.push(t);
+        }
+        return;
+    }
 
     // Narrate, then after speech ends + pauseAfter, run next step
     if (step.narration) {
@@ -221,9 +342,9 @@ function buildDemoSteps() {
     // Opening
     demoStep(
         "Fleet Command Center — Live Dashboard",
-        "This is GeotabVibe — a Fleet Command Center built on the Geotab SDK with Google Maps and Gemini AI. As you just saw, we can control everything by voice. Let's take a tour.",
+        "Thank you. This is GeotabVibe — a Fleet Command Center built on the Geotab SDK with Google Maps and Gemini AI. As you just saw, we can control everything by voice. Let's take a tour.",
         null,
-        500
+        0
     );
 
     // Fleet Overview
@@ -231,7 +352,7 @@ function buildDemoSteps() {
         "Fleet overview — all vehicles on map",
         "The dashboard connects to a live Geotab fleet and renders every vehicle on the map in real time. On the left, you can see fleet stats — total vehicles, how many are moving, stopped, and active faults.",
         () => fitAllVehicles(),
-        500
+        0
     );
 
     // KPIs
@@ -239,7 +360,7 @@ function buildDemoSteps() {
         "Real-time fleet stats and KPIs",
         "Below that, fleet KPIs are aggregated from trip data — total distance, trip count, idle percentage, driving hours, top speed, and exception events. These update every 60 seconds.",
         null,
-        500
+        0
     );
 
     // Vehicle Selection
@@ -250,7 +371,7 @@ function buildDemoSteps() {
             const v = getMovingVehicle() || getAnyVehicle();
             if (v) selectVehicle(v.id);
         },
-        500
+        0
     );
 
     // Detail Panel
@@ -258,7 +379,7 @@ function buildDemoSteps() {
         "Vehicle detail: driver, department, trips, faults",
         "The detail panel shows enriched data — driver names, departments, vehicle types — overlaid on live Geotab API data. Active faults for this vehicle are listed with diagnostic codes.",
         null,
-        500
+        0
     );
 
     // Trip Replay
@@ -273,19 +394,19 @@ function buildDemoSteps() {
                 startTripReplay(v.id, week, now);
             }
         },
-        1000
+        500
     );
 
     // Replay HUD
     demoStep(
         "Replay HUD — speed, distance, time",
-        "The replay plays at 5x speed with a heads-up display — real-time speed, acceleration, cumulative distance, elapsed time, average and max speed. All pre-computed for smooth playback.",
+        "The replay plays at 5 times speed with a heads-up display — real-time speed, acceleration, cumulative distance, elapsed time, average and max speed. All pre-computed for smooth playback.",
         () => {
             const speedSelect = document.getElementById("replaySpeed");
             if (speedSelect) { speedSelect.value = "5"; setReplaySpeed("5"); }
             playReplay();
         },
-        8000
+        1500
     );
 
     // Speed Coloring
@@ -293,10 +414,10 @@ function buildDemoSteps() {
         "Speed-colored path visualization",
         "You can pause, scrub, and change playback speed. The marker and path segments update color instantly based on the vehicle's speed at each GPS point.",
         () => pauseReplay(),
-        500
+        0
     );
 
-    // Activity Heatmap
+    // Activity Heatmap — before report so map is visible
     demoStep(
         "Activity Heatmap — fleet density",
         "The activity heatmap visualizes fleet density using vehicle positions with weighted clusters — showing depot areas, route corridors, and hotspot hubs across the fleet's operating area.",
@@ -305,46 +426,69 @@ function buildDemoSteps() {
             closeDetail();
             toggleHeatmap();
         },
-        500
+        0
     );
 
-    // Fleet Report — close chat, open slide out
+    // Heatmap commentary
+    demoStep(
+        "Heatmap: depots, corridors, hotspots",
+        "Bright spots indicate depot areas and frequent stops. The gradient trails reveal common route corridors and delivery clusters. This uses real trip stop data from the fleet.",
+        null,
+        0
+    );
+
+    // Fleet Report — open slideout, keep it open, show resize while it generates
     demoStep(
         "Fleet Report — AI-powered analysis",
-        "The Report button opens a resizable slide out panel. It queries Geotab's Ace AI for fleet insights, then passes the data to Gemini 3 to generate a styled executive report. This takes a few moments while the AI processes the fleet data.",
+        "Now let's generate the fleet report. This queries Geotab's Ace AI for fleet insights, then passes the data to Gemini 3 to generate a styled executive report.",
         () => {
             if (heatmapVisible) toggleHeatmap();
             openSlideout("report");
         },
-        2000
+        500
     );
 
-    // Show resize while report loads
+    // Resize the panel silently, then comment on it
     demoStep(
         "Resizable slide out panel",
-        "The slide out panel is resizable — drag the left edge to adjust the width. This works for both the report and the guide. Let's wait for the AI to finish generating the report.",
+        null,
         () => {
-            // Animate resize to demonstrate
             const panel = document.getElementById("slideoutPanel");
             if (panel) {
-                const origWidth = panel.offsetWidth;
                 panel.style.transition = "width 0.6s ease";
                 panel.style.width = "650px";
-                setTimeout(() => {
-                    panel.style.width = origWidth + "px";
-                    setTimeout(() => { panel.style.transition = ""; }, 700);
-                }, 1500);
+                setTimeout(() => { panel.style.transition = ""; }, 700);
             }
         },
-        8000
+        800
     );
+    demoStep(
+        null,
+        "Note we have resized the panel to allow the report to be viewed easier. The slide out panel is fully resizable by dragging the left edge. This works for both the report and the guide.",
+        null,
+        0
+    );
+
+    // Poll until report is actually done
+    DEMO_STEPS.push({
+        label: "Generating report...",
+        narration: null,
+        action: null,
+        pauseAfter: 0,
+        waitFor: () => {
+            const body = document.getElementById("slideoutBody");
+            if (!body) return true;
+            return !body.querySelector(".report-spinner");
+        },
+        waitTimeout: 90000
+    });
 
     // Report Content
     demoStep(
         "Report: KPIs, analysis, recommendations",
         "The report includes an executive summary, fleet overview with KPIs, top performers, anomalies and concerns, Ace AI analysis, and actionable recommendations.",
         null,
-        500
+        0
     );
 
     // Report Actions — scroll through
@@ -364,7 +508,7 @@ function buildDemoSteps() {
                 }, 30);
             }
         },
-        500
+        0
     );
 
     // User Guide
@@ -372,10 +516,10 @@ function buildDemoSteps() {
         "User Guide — full documentation",
         "Switching to the Guide tab loads the complete user guide inside the same slide out panel — covering every feature, control, and keyboard shortcut. No need to leave the dashboard.",
         () => switchSlideoutTab("guide"),
-        1000
+        0
     );
 
-    // Scroll guide
+    // Scroll guide — scroll all the way to the bottom
     demoStep(
         "Comprehensive guide: 10 sections",
         "The guide covers fleet stats, KPIs, map controls, vehicle detail panel, trip replay, reports, the chat assistant, themes, and tips. Everything stays in context.",
@@ -383,16 +527,17 @@ function buildDemoSteps() {
             const body = document.getElementById("slideoutBody");
             if (body) {
                 let scrollPos = 0;
+                const maxScroll = body.scrollHeight - body.clientHeight;
                 const scrollInterval = setInterval(() => {
-                    scrollPos += 4;
+                    scrollPos += 6;
                     body.scrollTop = scrollPos;
-                    if (scrollPos >= 600 || !demoRunning) {
+                    if (scrollPos >= maxScroll || !demoRunning) {
                         clearInterval(scrollInterval);
                     }
-                }, 30);
+                }, 20);
             }
         },
-        500
+        0
     );
 
     // Pop-out
@@ -400,7 +545,7 @@ function buildDemoSteps() {
         "Pop-out: standalone tab for sharing",
         "The pop-out button opens either the report or the guide in a standalone browser tab for sharing or printing separately.",
         null,
-        500
+        0
     );
 
     // Fleet Assistant — close slide out, open chat
@@ -411,36 +556,134 @@ function buildDemoSteps() {
             closeSlideout();
             if (!chatOpen) toggleChat();
         },
-        500
+        0
     );
 
-    // Chat Query
+    // Chat Query — send and wait for response
+    // Track ASSISTANT bubble count to detect when AI responds (not user bubbles)
     demoStep(
         "Asking: Which vehicles are moving?",
         "Asking 'which vehicles are moving right now' triggers a function call to the Geotab API. Gemini retrieves the data and responds conversationally with specific vehicle names and speeds.",
         () => {
+            // Reset chatSending guard in case a prior call is stuck
+            chatSending = false;
+            window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
             const input = document.getElementById("chatInput");
             if (input) {
                 input.value = "Which vehicles are moving right now?";
                 sendMessage();
             }
         },
-        10000
+        0
     );
 
-    // Action Commands
+    // Wait for a new ASSISTANT message + AI voice to finish
+    DEMO_STEPS.push({
+        label: "Waiting for AI response...",
+        narration: null,
+        action: null,
+        pauseAfter: 500,
+        waitFor: () => {
+            const assistantBubbles = document.querySelectorAll("#chatMessages .chat-bubble.assistant");
+            const hasNewResponse = assistantBubbles.length > (window._demoAssistantCount || 0);
+            const audioFinished = !demoAudio && !(window.speechSynthesis && speechSynthesis.speaking);
+            return hasNewResponse && audioFinished;
+        },
+        waitTimeout: 90000
+    });
+
+    // Safety query — exception events
+    demoStep(
+        "Asking: Any speeding violations?",
+        "Now asking about speeding violations. This calls the exception events API to retrieve rule violations from the fleet.",
+        () => {
+            chatSending = false;
+            window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
+            const input = document.getElementById("chatInput");
+            if (input) {
+                input.value = "Any speeding violations this week?";
+                sendMessage();
+            }
+        },
+        0
+    );
+
+    // Wait for safety response
+    DEMO_STEPS.push({
+        label: "Waiting for AI response...",
+        narration: null,
+        action: null,
+        pauseAfter: 500,
+        waitFor: () => {
+            const assistantBubbles = document.querySelectorAll("#chatMessages .chat-bubble.assistant");
+            const hasNewResponse = assistantBubbles.length > (window._demoAssistantCount || 0);
+            const audioFinished = !demoAudio && !(window.speechSynthesis && speechSynthesis.speaking);
+            return hasNewResponse && audioFinished;
+        },
+        waitTimeout: 90000
+    });
+
+    // Send driver message — action command
+    demoStep(
+        "Action: Send message to driver",
+        "The assistant can send messages directly to in-cab devices. This triggers a text message function call to the vehicle's Geotab GO device.",
+        () => {
+            chatSending = false;
+            window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
+            const input = document.getElementById("chatInput");
+            if (input) {
+                input.value = "Send a message to Demo - 01 saying please return to depot";
+                sendMessage();
+            }
+        },
+        0
+    );
+
+    // Wait for message response
+    DEMO_STEPS.push({
+        label: "Waiting for AI response...",
+        narration: null,
+        action: null,
+        pauseAfter: 500,
+        waitFor: () => {
+            const assistantBubbles = document.querySelectorAll("#chatMessages .chat-bubble.assistant");
+            const hasNewResponse = assistantBubbles.length > (window._demoAssistantCount || 0);
+            const audioFinished = !demoAudio && !(window.speechSynthesis && speechSynthesis.speaking);
+            return hasNewResponse && audioFinished;
+        },
+        waitTimeout: 90000
+    });
+
+    // Geofence creation — action command
     demoStep(
         "Action: Create a geofence zone",
-        "The assistant can also take actions. Asking it to create a geofence triggers a zone creation function call. The zone appears on the map immediately.",
+        "Finally, asking it to create a geofence triggers a zone creation function call. The zone appears on the map immediately.",
         () => {
+            chatSending = false;
+            window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
             const input = document.getElementById("chatInput");
             if (input) {
                 input.value = "Create a geofence called Demo Zone at 43.65, -79.38";
                 sendMessage();
             }
         },
-        10000
+        0
     );
+
+    // Wait for geofence response + AI voice to finish
+    DEMO_STEPS.push({
+        label: "Waiting for AI response...",
+        narration: null,
+        action: null,
+        pauseAfter: 500,
+        waitFor: () => {
+            const assistantBubbles = document.querySelectorAll("#chatMessages .chat-bubble.assistant");
+            const hasNewResponse = assistantBubbles.length > (window._demoAssistantCount || 0);
+            const audioFinished = !demoAudio && !(window.speechSynthesis && speechSynthesis.speaking);
+            return hasNewResponse && audioFinished;
+        },
+        waitTimeout: 90000
+    });
 
     // Solo Mode
     demoStep(
@@ -453,7 +696,7 @@ function buildDemoSteps() {
                 setTimeout(() => toggleSoloMode(), 500);
             }
         },
-        500
+        0
     );
 
     // Theme Toggle
@@ -465,7 +708,7 @@ function buildDemoSteps() {
             closeDetail();
             toggleTheme();
         },
-        3000
+        1500
     );
 
     // Toggle back
@@ -473,15 +716,15 @@ function buildDemoSteps() {
         null,
         null,
         () => toggleTheme(),
-        1000
+        500
     );
 
     // Final View — this is the last narrated step
     demoStep(
         "GeotabVibe — Fleet Command Center",
-        "Fit All brings every vehicle back into view. That's GeotabVibe — real-time fleet visualization, AI-powered analysis, conversational control, and trip replay — all in one dashboard. Thank you for watching.",
+        "That's GeotabVibe — real-time fleet visualization, AI-powered analysis, conversational control, and trip replay — all in one dashboard. All actions were completed live by the AI while recording and running this demo. This demo can be triggered at any time by saying 'play the demo' in the chat. Thank you for watching.",
         () => fitAllVehicles(),
-        5000
+        3000
     );
 }
 
@@ -493,22 +736,21 @@ function runDemo() {
     demoStepIndex = 0;
     demoTimeouts = [];
     createDemoOverlay();
-    showToast("Demo starting — sit back and watch!", "info", 3000);
 
-    // Ensure voices are loaded (some browsers load async)
-    if (window.speechSynthesis) {
-        speechSynthesis.getVoices();
-    }
+    // Build steps if not already built by pre-cache
+    if (!DEMO_STEPS.length) buildDemoSteps();
 
-    buildDemoSteps();
+    // Pre-warm API caches so chat queries are instant
+    fetch("/api/vehicles").catch(() => {});
+    fetch("/api/faults").catch(() => {});
+    fetch("/api/fleet-kpis").catch(() => {});
 
     // Open chat panel and shift left so map features stay visible
     if (!chatOpen) toggleChat();
     demoChatLeft();
 
-    // Start first step after a beat
-    const t = setTimeout(runNextDemoStep, 2000);
-    demoTimeouts.push(t);
+    // Start immediately — the AI intro voice has already played
+    runNextDemoStep();
 }
 
 // ── Auto-start on ?demo=1 ────────────────────────────────────────────

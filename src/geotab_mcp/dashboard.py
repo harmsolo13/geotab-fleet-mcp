@@ -87,8 +87,19 @@ def _cache_get(key: str) -> object | None:
 
 
 def _cache_set(key: str, data: object, ttl_key: str) -> None:
-    """Store data with TTL based on data type."""
-    _cache_store[key] = (time.monotonic() + _TTL.get(ttl_key, 60), data)
+    """Store data in memory + persist to SQLite for stale-serve fallback."""
+    ttl = _TTL.get(ttl_key, 60)
+    _cache_store[key] = (time.monotonic() + ttl, data)
+    # Also persist to DB so we can serve stale data when rate-limited
+    api_tracker.cache_response(key, data, ttl)
+
+
+def _cache_stale(key: str) -> object | None:
+    """Fallback: return stale data from SQLite when API is rate-limited."""
+    data = api_tracker.get_cached_response(key, max_age=0)  # any age OK
+    if data is not None:
+        api_tracker.log_call("cache", key, "stale_fallback", 0, cached=True)
+    return data
 
 
 def _cache_force(key: str) -> bool:
@@ -110,25 +121,38 @@ def _get_client() -> GeotabClient:
 def _get_chat() -> GeminiChat:
     global _gemini_chat
     if _gemini_chat is None:
-        _gemini_chat = GeminiChat(_get_client())
+        _gemini_chat = GeminiChat(_get_client(), cache_getter=_cache_get)
     return _gemini_chat
 
 
 def _fetch_vehicles_with_locations() -> list[dict]:
-    """Fetch vehicles + batch locations in 2 API calls (not N+1)."""
+    """Fetch vehicles + batch locations in 2 API calls (not N+1).
+
+    Falls back to SQLite-cached data if the Geotab API is rate-limited.
+    """
     client = _get_client()
 
     # Vehicles (cached separately so status endpoint can reuse)
     vehicles = _cache_get("vehicles")
     if vehicles is None:
-        vehicles = client.get_vehicles(limit=500)
-        _cache_set("vehicles", vehicles, "vehicles")
+        try:
+            vehicles = client.get_vehicles(limit=500)
+            _cache_set("vehicles", vehicles, "vehicles")
+        except Exception:
+            vehicles = _cache_stale("vehicles")
+            if vehicles is None:
+                raise
 
     # Batch locations — 1 API call for ALL vehicles
     loc_map = _cache_get("locations")
     if loc_map is None:
-        loc_map = client.get_all_vehicle_locations()
-        _cache_set("locations", loc_map, "locations")
+        try:
+            loc_map = client.get_all_vehicle_locations()
+            _cache_set("locations", loc_map, "locations")
+        except Exception:
+            loc_map = _cache_stale("locations")
+            if loc_map is None:
+                loc_map = {}
 
     # Enrich vehicles with location data
     enriched = []
@@ -187,6 +211,9 @@ def api_vehicles():
         _cache_set(cache_key, result, "vehicles")
         return jsonify(result)
     except Exception as e:
+        stale = _cache_stale(cache_key)
+        if stale:
+            return jsonify(stale), 200
         return jsonify({"error": str(e)}), 500
 
 
@@ -222,6 +249,9 @@ def api_vehicle_trips(device_id: str):
         _cache_set(cache_key, result, "trips")
         return jsonify(result)
     except Exception as e:
+        stale = _cache_stale(cache_key)
+        if stale:
+            return jsonify(stale), 200
         return jsonify({"error": str(e)}), 500
 
 
@@ -239,6 +269,9 @@ def api_zones():
         _cache_set(cache_key, result, "zones")
         return jsonify(result)
     except Exception as e:
+        stale = _cache_stale(cache_key)
+        if stale:
+            return jsonify(stale), 200
         return jsonify({"error": str(e)}), 500
 
 
@@ -257,6 +290,9 @@ def api_faults():
         _cache_set(cache_key, result, "faults")
         return jsonify(result)
     except Exception as e:
+        stale = _cache_stale(cache_key)
+        if stale:
+            return jsonify(stale), 200
         return jsonify({"error": str(e)}), 500
 
 
@@ -308,6 +344,9 @@ def api_status():
         _cache_set(cache_key, result, "status")
         return jsonify(result)
     except Exception as e:
+        stale = _cache_stale(cache_key)
+        if stale:
+            return jsonify(stale), 200
         return jsonify({"connected": False, "error": str(e)}), 500
 
 
@@ -411,9 +450,12 @@ def api_fleet_kpis():
             "avg_trips_per_vehicle": round(total_trips / max(vehicles_with_trips, 1), 1),
         }
         # Long TTL — KPIs don't need to refresh often
-        _cache_store[cache_key] = (time.monotonic() + 300, result)
+        _cache_set(cache_key, result, "trips")  # uses 300s TTL
         return jsonify(result)
     except Exception as e:
+        stale = _cache_stale(cache_key)
+        if stale:
+            return jsonify(stale), 200
         return jsonify({"error": str(e)}), 500
 
 
@@ -494,9 +536,12 @@ def api_heatmap_data():
                 })
 
         result = {"count": len(points), "points": points}
-        _cache_store[cache_key] = (time.monotonic() + 300, result)
+        _cache_set(cache_key, result, "zones")  # uses 300s TTL
         return jsonify(result)
     except Exception as e:
+        stale = _cache_stale(cache_key)
+        if stale:
+            return jsonify(stale), 200
         return jsonify({"error": str(e)}), 500
 
 
@@ -602,10 +647,16 @@ def api_report():
             vehicles = client.get_vehicles(limit=500)
             _cache_set("vehicles", vehicles, "vehicles")
 
-        # Gather trip summaries per vehicle (sample 5 to respect rate limits)
+        # Gather trip summaries + faults in parallel using threads
+        import concurrent.futures
+
         vehicle_summaries = []
+        faults_data = {"count": 0, "faults": []}
+        ace_insight = ""
+
         sample = sorted(vehicles, key=lambda v: v.get("id", ""))[:5]
-        for v in sample:
+
+        def _fetch_vehicle_trips(v):
             trip_cache_key = f"trips_{v['id']}_None_None"
             trips_data = _cache_get(trip_cache_key)
             if trips_data is None:
@@ -614,49 +665,50 @@ def api_report():
                     trips_data = {"trips": trips_raw}
                     _cache_set(trip_cache_key, trips_data, "trips")
                 except Exception:
-                    continue
+                    return None
             trips = trips_data.get("trips", trips_data) if isinstance(trips_data, dict) else trips_data
             if not trips:
-                continue
+                return None
             total_dist = sum(t.get("distance") or 0 for t in trips)
             total_drive = sum(_parse_duration(t.get("drivingDuration")) for t in trips)
             total_idle = sum(_parse_duration(t.get("idlingDuration")) for t in trips)
             max_spd = max((t.get("maximumSpeed") or 0) for t in trips)
-            vehicle_summaries.append({
+            return {
                 "name": v.get("name", v["id"]),
                 "trips": len(trips),
                 "distance_km": round(total_dist / 1000, 1),
                 "driving_hours": round(total_drive / 3600, 1),
                 "idle_hours": round(total_idle / 3600, 1),
                 "max_speed_kmh": round(max_spd, 1),
-            })
+            }
 
-        # Get faults
-        faults_data = _cache_get("api_faults_all")
-        if faults_data is None:
+        def _fetch_faults():
+            cached = _cache_get("api_faults_all")
+            if cached is not None:
+                return cached
             try:
                 fault_list = client.get_faults(limit=200)
-                faults_data = {"count": len(fault_list), "faults": fault_list[:20]}
-                _cache_set("api_faults_all", faults_data, "faults")
+                result = {"count": len(fault_list), "faults": fault_list[:20]}
+                _cache_set("api_faults_all", result, "faults")
+                return result
             except Exception:
-                faults_data = {"count": 0, "faults": []}
+                return {"count": 0, "faults": []}
 
-        # Query Ace AI for fleet insights (allow up to 90s — Ace can be slow)
+        # Run trip + fault fetches in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            trip_futures = {pool.submit(_fetch_vehicle_trips, v): v for v in sample}
+            faults_future = pool.submit(_fetch_faults)
+
+            for f in concurrent.futures.as_completed(trip_futures):
+                result = f.result()
+                if result:
+                    vehicle_summaries.append(result)
+
+            faults_data = faults_future.result()
+
+        # Ace AI: skip for demo dataset (unreliable, adds 15-60s for refusals)
+        # The hardcoded fallback below provides consistent, presentation-grade insights
         ace_insight = ""
-        try:
-            ace_result = client.ace_query(
-                "How many vehicles are in the fleet and what is the total distance driven? "
-                "Also share the fleet safety ranking summary and your top 3 recommendations.",
-                timeout=90,
-            )
-            if ace_result.get("status") == "complete":
-                ace_insight = ace_result.get("answer", "")
-                # Strip markdown fences if Ace wraps its response
-                ace_insight = re.sub(r"^```\w*\s*\n?", "", ace_insight)
-                ace_insight = re.sub(r"\n?```\s*$", "", ace_insight)
-        except Exception as ace_err:
-            print(f"[Report] Ace AI query failed: {ace_err}")
-            ace_insight = ""
 
         # Fallback: if Ace returned empty or a refusal/limitation, use demo insights
         _ace_lower = ace_insight.lower()
@@ -737,12 +789,14 @@ def api_report():
             "4. Anomalies & Concerns (high idle, faults, excessive speed)\n"
             + ace_instruction +
             "6. Recommendations (3-5 actionable items)\n\n"
-            "Use a clean, modern style. Return ONLY raw HTML — no markdown, no ```html fences, "
-            "no <html>/<head> tags. Just the styled div content. "
-            "Use colors: blue #4a9eff for headers, green #34d399 for positive, red #f87171 for alerts.\n"
-            "Make section 5 (Ace AI) visually prominent — use a colored border-left or background card."
+            "Use a clean, modern LIGHT theme style — white background (#ffffff), dark text (#1a1a2e). "
+            "Return ONLY raw HTML — no markdown, no ```html fences, no <html>/<head> tags. Just the styled div content. "
+            "Use colors: blue #4a9eff for headers, green #34d399 for positive, red #f87171 for alerts. "
+            "All text must be dark (#1a1a2e or #333). Never use light/white text or dark backgrounds.\n"
+            "Make section 5 (Ace AI) visually prominent — use a colored border-left or background card.\n"
+            "Keep the report concise — aim for under 3000 characters of HTML. No filler text."
         )
-        analysis = gemini.analyze_fleet(report_data, question=prompt)
+        analysis = gemini.analyze_fleet(report_data, question=prompt, max_tokens=4096)
 
         # Check if Gemini succeeded or we need fallback
         if analysis.get("status") == "success" and analysis.get("analysis"):
@@ -765,6 +819,9 @@ def api_report():
         _cache_set("report_html", result, "report")
         return jsonify(result)
     except Exception as e:
+        stale = _cache_stale("report_html")
+        if stale:
+            return jsonify(stale), 200
         return jsonify({"error": str(e)}), 500
 
 
@@ -788,6 +845,9 @@ def api_trip_replay(device_id: str):
         _cache_set(cache_key, result, "trips")
         return jsonify(result)
     except Exception as e:
+        stale = _cache_stale(cache_key)
+        if stale:
+            return jsonify(stale), 200
         return jsonify({"error": str(e)}), 500
 
 
@@ -892,18 +952,96 @@ def api_enrichment_toggle():
     return jsonify({"enabled": new_state})
 
 
-# ── TTS API (Piper) ─────────────────────────────────────────────────────
+# ── TTS API (Gemini) ─────────────────────────────────────────────────────
 
-_PIPER_BIN = "/home/harmsolo/ai-assistant-opengl/bin/piper/piper"
-_PIPER_MODEL = "/home/harmsolo/ai-assistant-opengl/models/piper/en_US-ryan-high.onnx"
-_TTS_CACHE: dict[str, str] = {}  # text hash → file path
+_TTS_CACHE_DIR = _STATIC_DIR / "audio" / "tts_cache"
+_TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+_TTS_CACHE: dict[str, str] = {}  # cache_key → file path
+
+# Load existing cached files on startup
+for _f in _TTS_CACHE_DIR.glob("*.mp3"):
+    _TTS_CACHE[_f.stem] = str(_f)
+
+# Voice assignments: narrator = demo tour guide, assistant = AI system voice
+_TTS_VOICES = {
+    "narrator": "Leda",       # Youthful female — demo tour narrator
+    "assistant": "Charon",    # Informative male — AI system / fleet assistant
+}
+
+
+import asyncio
+
+_TTS_MODEL = "gemini-2.5-flash-native-audio-latest"
+
+
+async def _generate_tts_audio(text: str, voice_name: str) -> bytes:
+    """Generate raw PCM audio bytes via Gemini Live API (native audio dialog)."""
+    from google import genai
+
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    client = genai.Client(api_key=api_key)
+
+    config = {
+        "response_modalities": ["AUDIO"],
+        "system_instruction": "You are a voice-over narrator. Read the user's text exactly as written, word for word. Do not add, remove, or change any words. Do not respond conversationally. Just read the text aloud.",
+        "speech_config": {
+            "voice_config": {
+                "prebuilt_voice_config": {"voice_name": voice_name}
+            }
+        },
+    }
+
+    audio_chunks = []
+    async with client.aio.live.connect(model=_TTS_MODEL, config=config) as session:
+        await session.send_client_content(
+            turns={"role": "user", "parts": [{"text": f"Read this exactly: {text}"}]},
+            turn_complete=True,
+        )
+        async for response in session.receive():
+            sc = getattr(response, "server_content", None)
+            if sc and sc.model_turn:
+                for part in sc.model_turn.parts:
+                    if hasattr(part, "inline_data") and part.inline_data:
+                        audio_chunks.append(part.inline_data.data)
+            # Stop when turn is complete
+            if sc and sc.turn_complete:
+                break
+
+    return b"".join(audio_chunks)
+
+
+def _pcm_to_mp3(pcm_data: bytes, cache_key: str) -> str | None:
+    """Convert raw 24kHz 16-bit PCM to MP3 via WAV intermediate. Returns mp3 path."""
+    import wave
+
+    wav_path = str(_TTS_CACHE_DIR / f"{cache_key}.wav")
+    mp3_path = str(_TTS_CACHE_DIR / f"{cache_key}.mp3")
+
+    with wave.open(wav_path, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(24000)
+        wf.writeframes(pcm_data)
+
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", wav_path, "-ar", "44100", "-ac", "1",
+         "-b:a", "128k", mp3_path],
+        capture_output=True, timeout=30,
+    )
+    if os.path.isfile(wav_path):
+        os.unlink(wav_path)
+
+    if os.path.isfile(mp3_path):
+        _TTS_CACHE[cache_key] = mp3_path
+        return mp3_path
+    return None
 
 
 @app.route("/api/tts", methods=["POST"])
 def api_tts():
-    """Generate speech audio from text using Piper TTS (Ryan voice).
+    """Generate speech audio from text using Gemini Native Audio Dialog.
 
-    Body: {"text": "Hello world", "speed": 1.0}
+    Body: {"text": "Hello world", "voice": "narrator"|"assistant"|"<voice_name>"}
     Returns: audio/mpeg
     """
     data = request.get_json(silent=True) or {}
@@ -911,49 +1049,89 @@ def api_tts():
     if not text:
         return jsonify({"error": "No text provided"}), 400
 
-    # Check if Piper is available
-    if not os.path.isfile(_PIPER_BIN) or not os.path.isfile(_PIPER_MODEL):
-        return jsonify({"error": "Piper TTS not available"}), 503
+    # Resolve voice name
+    voice_param = data.get("voice", "narrator")
+    voice_name = _TTS_VOICES.get(voice_param, voice_param)
 
-    speed = float(data.get("speed", 1.0))
-
-    # Cache by text hash
-    cache_key = hashlib.md5(f"{text}:{speed}".encode()).hexdigest()
+    # Cache by text + voice hash
+    cache_key = hashlib.md5(f"{text}:{voice_name}".encode()).hexdigest()
     if cache_key in _TTS_CACHE and os.path.isfile(_TTS_CACHE[cache_key]):
         return send_file(_TTS_CACHE[cache_key], mimetype="audio/mpeg")
 
     try:
-        # Generate WAV with Piper
-        wav_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        wav_path = wav_file.name
-        wav_file.close()
+        pcm_data = asyncio.run(_generate_tts_audio(text, voice_name))
+        if not pcm_data:
+            return jsonify({"error": "No audio generated"}), 500
 
-        proc = subprocess.run(
-            [_PIPER_BIN, "--model", _PIPER_MODEL,
-             "--output_file", wav_path,
-             "--length_scale", str(1.0 / speed)],
-            input=text, capture_output=True, text=True, timeout=30,
-        )
-        if proc.returncode != 0:
-            os.unlink(wav_path)
-            return jsonify({"error": "Piper TTS failed"}), 500
-
-        # Convert WAV → MP3 with ffmpeg
-        mp3_path = wav_path.replace(".wav", ".mp3")
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", wav_path, "-ar", "44100", "-ac", "1",
-             "-b:a", "128k", mp3_path],
-            capture_output=True, timeout=15,
-        )
-        os.unlink(wav_path)
-
-        if not os.path.isfile(mp3_path):
+        mp3_path = _pcm_to_mp3(pcm_data, cache_key)
+        if not mp3_path:
             return jsonify({"error": "Audio conversion failed"}), 500
 
-        _TTS_CACHE[cache_key] = mp3_path
         return send_file(mp3_path, mimetype="audio/mpeg")
     except Exception as e:
+        print(f"[TTS] Gemini Native Audio error: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+# ── TTS Warmup ──────────────────────────────────────────────────────────
+
+def _generate_tts(text: str, voice_name: str) -> str | None:
+    """Generate a single TTS MP3 and cache it. Returns cache_key or None."""
+    cache_key = hashlib.md5(f"{text}:{voice_name}".encode()).hexdigest()
+    if cache_key in _TTS_CACHE and os.path.isfile(_TTS_CACHE[cache_key]):
+        return cache_key  # already cached
+
+    try:
+        pcm_data = asyncio.run(_generate_tts_audio(text, voice_name))
+        if not pcm_data:
+            return None
+        mp3_path = _pcm_to_mp3(pcm_data, cache_key)
+        return cache_key if mp3_path else None
+    except Exception as e:
+        print(f"[TTS warmup] Error generating '{text[:40]}...': {e}")
+        return None
+
+
+@app.route("/api/tts/warmup", methods=["POST"])
+def api_tts_warmup():
+    """Pre-generate TTS audio for all demo narration lines.
+
+    Body: {"lines": [{"text": "...", "voice": "narrator"}, ...]}
+    Returns: {"total": N, "cached": M, "generated": G, "failed": F}
+    """
+    data = request.get_json(silent=True) or {}
+    lines = data.get("lines", [])
+    if not lines:
+        return jsonify({"error": "No lines provided"}), 400
+
+    cached = 0
+    generated = 0
+    failed = 0
+
+    for item in lines:
+        text = item.get("text", "").strip()
+        voice_param = item.get("voice", "narrator")
+        voice_name = _TTS_VOICES.get(voice_param, voice_param)
+        if not text:
+            continue
+
+        cache_key = hashlib.md5(f"{text}:{voice_name}".encode()).hexdigest()
+        if cache_key in _TTS_CACHE and os.path.isfile(_TTS_CACHE[cache_key]):
+            cached += 1
+            continue
+
+        result = _generate_tts(text, voice_name)
+        if result:
+            generated += 1
+        else:
+            failed += 1
+
+    return jsonify({
+        "total": len(lines),
+        "cached": cached,
+        "generated": generated,
+        "failed": failed,
+    })
 
 
 # ── Entry Point ──────────────────────────────────────────────────────────
