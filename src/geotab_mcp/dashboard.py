@@ -45,6 +45,44 @@ except Exception as _e:
     print(f"Warning: enrichment DB init failed: {_e}")
 api_tracker.init_db()
 
+# ── Startup Cache Warming ─────────────────────────────────────────────
+# Load high-value data from SQLite into in-memory cache so the first
+# request after a restart doesn't need to hit the Geotab API.
+_WARM_KEYS = [
+    "vehicles", "locations", "api_vehicles", "api_zones",
+    "api_faults_all", "api_status", "api_fleet_kpis", "api_heatmap",
+]
+
+
+def _warm_cache_from_db() -> None:
+    """Pre-populate in-memory cache from SQLite on startup."""
+    warmed = 0
+    for key in _WARM_KEYS:
+        data = api_tracker.get_cached_response(key, max_age=0)
+        if data is not None:
+            ttl_key = _infer_ttl_key(key)
+            ttl = _TTL.get(ttl_key, 60)
+            _cache_store[key] = (time.monotonic() + ttl, data)
+            warmed += 1
+    # Also warm any trip cache keys
+    try:
+        conn = api_tracker._get_db()
+        rows = conn.execute(
+            "SELECT cache_key FROM api_response_cache WHERE cache_key LIKE 'trips_%'"
+        ).fetchall()
+        conn.close()
+        for row in rows:
+            k = row[0]
+            data = api_tracker.get_cached_response(k, max_age=0)
+            if data is not None:
+                _cache_store[k] = (time.monotonic() + _TTL.get("trips", 300), data)
+                warmed += 1
+    except Exception:
+        pass
+    if warmed:
+        print(f"[cache] Warmed {warmed} entries from SQLite on startup", flush=True)
+
+
 # Shared Geotab client (lazy init)
 _client: GeotabClient | None = None
 
@@ -71,10 +109,16 @@ _cache_store: dict[str, tuple[float, object]] = {}  # key -> (expires_at, data)
 
 
 def _cache_get(key: str) -> object | None:
-    """Return cached value if still valid, else None."""
+    """Return cached value — checks in-memory first, then SQLite.
+
+    This makes ALL dashboard routes DB-first automatically:
+    1. In-memory (fast, TTL-based)
+    2. SQLite (persistent, any-age stale OK)
+    3. None → caller hits the Geotab API
+    """
+    # 1. In-memory — fast path
     entry = _cache_store.get(key)
     if entry and entry[0] > time.monotonic():
-        # Determine service from cache key for tracking
         if key.startswith("trips_") or key.startswith("replay_"):
             svc, method = "geotab", key.split("_")[0]
         elif key.startswith("api_"):
@@ -83,7 +127,39 @@ def _cache_get(key: str) -> object | None:
             svc, method = "cache", key
         api_tracker.log_call(svc, method, "success", 0, cached=True)
         return entry[1]
+
+    # 2. SQLite persistent cache — serve stale rather than hitting the API
+    db_data = api_tracker.get_cached_response(key, max_age=0)
+    if db_data is not None:
+        # Re-warm in-memory cache so subsequent requests are fast
+        ttl_key = _infer_ttl_key(key)
+        ttl = _TTL.get(ttl_key, 60)
+        _cache_store[key] = (time.monotonic() + ttl, db_data)
+        api_tracker.log_call("cache", key, "db_warm", 0, cached=True)
+        return db_data
+
     return None
+
+
+def _infer_ttl_key(key: str) -> str:
+    """Infer the TTL category from a cache key."""
+    if key.startswith("trips_") or key.startswith("replay_"):
+        return "trips"
+    if "vehicle" in key:
+        return "vehicles"
+    if "location" in key:
+        return "locations"
+    if "fault" in key:
+        return "faults"
+    if "zone" in key:
+        return "zones"
+    if "status" in key:
+        return "status"
+    if "report" in key:
+        return "report"
+    if "kpi" in key or "heatmap" in key:
+        return "trips"
+    return "vehicles"  # default 60s
 
 
 def _cache_set(key: str, data: object, ttl_key: str) -> None:
@@ -100,6 +176,10 @@ def _cache_stale(key: str) -> object | None:
     if data is not None:
         api_tracker.log_call("cache", key, "stale_fallback", 0, cached=True)
     return data
+
+
+# Run startup cache warming now that _infer_ttl_key is defined
+_warm_cache_from_db()
 
 
 def _cache_force(key: str) -> bool:
@@ -306,12 +386,17 @@ def api_status():
         return jsonify(cached)
     try:
         client = _get_client()
-        conn = client.test_connection()
+
+        # Cache test_connection — no need to ping Geotab every time
+        conn = _cache_get("connection_test")
+        if conn is None:
+            conn = client.test_connection()
+            _cache_set("connection_test", conn, "status")
 
         # Reuse cached vehicles if available (avoids duplicate fetch)
         vehicles = _cache_get("vehicles")
         if vehicles is None:
-            vehicles = client.get_vehicles(limit=1000)
+            vehicles = client.get_vehicles(limit=500)
             _cache_set("vehicles", vehicles, "vehicles")
 
         # Reuse cached faults
