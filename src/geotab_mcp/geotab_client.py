@@ -310,12 +310,28 @@ class GeotabClient:
                 "name": z.get("name"),
                 "comment": z.get("comment", ""),
                 "externalReference": z.get("externalReference", ""),
-                "zoneTypes": [zt.get("id") for zt in z.get("zoneTypes", [])],
-                "groups": [g.get("id") for g in z.get("groups", [])],
+                "zoneTypes": [zt.get("id") if isinstance(zt, dict) else str(zt) for zt in z.get("zoneTypes", [])],
+                "groups": [g.get("id") if isinstance(g, dict) else str(g) for g in z.get("groups", [])],
                 "pointCount": len(points),
                 "centroid": _centroid(points) if points else None,
             })
         return results
+
+    # Well-known Geotab rule ID → human-readable name mapping
+    _RULE_NAMES: dict[str, str] = {
+        "RulePostedSpeedingId": "Speeding",
+        "atGqTXUrP9EusU9OvWXRIVg": "Max Speed",
+        "RuleHarshBrakingId": "Harsh Braking",
+        "RuleJackrabbitStartsId": "Hard Acceleration",
+        "RuleHarshCorneringId": "Harsh Cornering",
+        "RuleEnhancedMajorCollisionId": "Major Collision",
+        "RuleEnhancedMinorCollisionId": "Minor Collision",
+        "RuleAccidentId": "Possible Collision",
+        "RuleSeatbeltId": "Seat Belt",
+        "RuleEngineLightOnId": "Engine Light On",
+        "RuleApplicationExceptionId": "Application Exception",
+        "a6ewYX-gcLUyL01olqgUQBw": "Engine Fault",
+    }
 
     def get_exception_events(
         self,
@@ -341,11 +357,13 @@ class GeotabClient:
             )
         results = []
         for e in events:
+            rule_id = e["rule"].get("id") if isinstance(e.get("rule"), dict) else e.get("rule")
             results.append({
                 "id": e.get("id"),
                 "deviceId": e["device"].get("id") if isinstance(e.get("device"), dict) else e.get("device"),
                 "driverId": e["driver"].get("id") if isinstance(e.get("driver"), dict) else e.get("driver"),
-                "ruleId": e["rule"].get("id") if isinstance(e.get("rule"), dict) else e.get("rule"),
+                "ruleId": rule_id,
+                "ruleName": self._RULE_NAMES.get(rule_id, rule_id),
                 "activeFrom": str(e.get("activeFrom", "")),
                 "activeTo": str(e.get("activeTo", "")),
                 "duration": str(e.get("duration", "")),
@@ -367,6 +385,7 @@ class GeotabClient:
             "points": points,
             "comment": comment,
             "externalReference": "",
+            "groups": [{"id": "GroupCompanyId"}],
         }
         if zone_types:
             zone["zoneTypes"] = [{"id": zt} for zt in zone_types]

@@ -30,7 +30,9 @@ CHAT_SYSTEM_PROMPT = (
     "Be conversational and concise. Use specific numbers from the data. "
     "Always use metric units — km, km/h, litres, hours. Never use miles, mph, or gallons. "
     "If a question is ambiguous, make reasonable assumptions and state them. "
-    "Format responses for easy reading — use short paragraphs, not markdown headers."
+    "Format responses for easy reading — use short paragraphs, not markdown headers. "
+    "IMPORTANT: Use the minimum number of tool calls needed. One tool call is usually enough. "
+    "Summarise the data you already have rather than making additional calls."
 )
 
 # ── Geotab Tool Declarations for Gemini Function Calling ────────────────
@@ -59,13 +61,28 @@ _GEOTAB_TOOLS = [
     ),
     genai_types.FunctionDeclaration(
         name="get_vehicle_location",
-        description="Get real-time GPS location, speed, and bearing for a vehicle. Use to answer 'where is vehicle X?' or 'is vehicle X moving?'.",
+        description="Get real-time GPS location, speed, and bearing for a single vehicle. Use to answer 'where is vehicle X?'.",
         parameters={
             "type": "OBJECT",
             "properties": {
                 "device_id": {"type": "STRING", "description": "The Geotab device ID"},
             },
             "required": ["device_id"],
+        },
+    ),
+    genai_types.FunctionDeclaration(
+        name="get_fleet_status",
+        description=(
+            "Get ALL vehicles with their real-time GPS location, speed, and communication status in ONE call. "
+            "Use this to answer fleet-wide questions like 'which vehicles are moving?', 'how many are idle?', "
+            "'show me the fleet status'. Returns every vehicle with lat/lng, speed (km/h), bearing, and whether "
+            "it is currently communicating. Much more efficient than calling get_vehicle_location per vehicle."
+        ),
+        parameters={
+            "type": "OBJECT",
+            "properties": {
+                "limit": {"type": "INTEGER", "description": "Max vehicles to return (default 500)"},
+            },
         },
     ),
     genai_types.FunctionDeclaration(
@@ -141,25 +158,8 @@ _GEOTAB_TOOLS = [
             },
         },
     ),
-    genai_types.FunctionDeclaration(
-        name="ace_query",
-        description=(
-            "Ask Geotab Ace AI a natural language question about fleet data. "
-            "Ace is Geotab's built-in AI that can analyze fleet patterns, provide insights, "
-            "and answer complex questions using the full telematics dataset. "
-            "Use this for high-level fleet insights, trend analysis, or questions that "
-            "require deeper analysis than raw data queries. "
-            "Example questions: 'Which vehicles have the worst fuel efficiency?', "
-            "'What are the top safety concerns this week?', 'Summarize fleet utilization trends'."
-        ),
-        parameters={
-            "type": "OBJECT",
-            "properties": {
-                "question": {"type": "STRING", "description": "Natural language question to ask Geotab Ace AI"},
-            },
-            "required": ["question"],
-        },
-    ),
+    # ace_query removed from chat tools — too slow (30s+), causes timeouts.
+    # Still available via /api/ace endpoint for direct use.
     genai_types.FunctionDeclaration(
         name="create_zone",
         description=(
@@ -221,6 +221,7 @@ class GeminiClient:
         data: str | dict | list,
         analysis_type: str = "general",
         question: str = "",
+        max_tokens: int = 8192,
     ) -> dict:
         """Send fleet data to Gemini for analysis.
 
@@ -254,7 +255,7 @@ class GeminiClient:
                     config=genai.types.GenerateContentConfig(
                         system_instruction=SYSTEM_PROMPT,
                         temperature=0.3,
-                        max_output_tokens=8192,
+                        max_output_tokens=max_tokens,
                     ),
                 )
                 ms = int((_time.monotonic() - t0) * 1000)
@@ -323,18 +324,55 @@ class GeminiClient:
 class GeminiChat:
     """Conversational fleet assistant with Gemini function calling."""
 
-    MAX_TOOL_ROUNDS = 5
+    MAX_TOOL_ROUNDS = 4
     MAX_ITEMS = 20
     MAX_BYTES = 30_000
 
-    def __init__(self, geotab_client) -> None:
+    def __init__(self, geotab_client, cache_getter=None) -> None:
         api_key = os.getenv("GEMINI_API_KEY", "")
         if not api_key:
             raise ValueError("GEMINI_API_KEY environment variable is required")
         self._client = genai.Client(api_key=api_key)
         self._model = "gemini-3-flash-preview"
         self._geotab = geotab_client
+        self._cache_getter = cache_getter  # function(key) -> cached data or None
         self._tool_config = genai_types.Tool(function_declarations=_GEOTAB_TOOLS)
+
+    def _get_fleet_status(self, args: dict) -> list[dict]:
+        """Get all vehicles with their real-time location and speed."""
+        # Reuse dashboard cache if available (avoids slow Geotab API calls)
+        vehicles = None
+        loc_map = None
+        if self._cache_getter:
+            vehicles = self._cache_getter("vehicles")
+            loc_map = self._cache_getter("locations")
+        if vehicles is None:
+            try:
+                vehicles = self._geotab.get_vehicles(limit=args.get("limit", 500))
+            except Exception:
+                # Fall back to DB cache when rate-limited
+                vehicles = api_tracker.get_cached_response("vehicles", max_age=0)
+                if vehicles is None:
+                    raise
+        if loc_map is None:
+            try:
+                loc_map = self._geotab.get_all_vehicle_locations()
+            except Exception:
+                loc_map = api_tracker.get_cached_response("locations", max_age=0) or {}
+        result = []
+        for v in vehicles:
+            loc = loc_map.get(v["id"], {})
+            result.append({
+                "name": v.get("name", ""),
+                "id": v["id"],
+                "latitude": loc.get("latitude"),
+                "longitude": loc.get("longitude"),
+                "speed": loc.get("speed", 0),
+                "bearing": loc.get("bearing"),
+                "isMoving": (loc.get("speed") or 0) > 2,
+                "isCommunicating": loc.get("isDeviceCommunicating", False),
+            })
+        return result
 
     def _create_zone_helper(self, args: dict) -> dict:
         """Create a geofence zone from chat — generates circle polygon."""
@@ -379,11 +417,22 @@ class GeminiChat:
         return data
 
     def _execute_tool(self, name: str, args: dict):
-        """Dispatch a function call to the GeotabClient."""
+        """Dispatch a function call to the GeotabClient.
+
+        DB-first strategy for read operations: check SQLite cache before
+        hitting the Geotab API.  Write operations (create_zone, send_text_message)
+        always go to the API directly.
+        """
+        import hashlib as _hl
+
+        # Write operations — no caching, always live
+        _WRITE_OPS = {"create_zone", "send_text_message", "ace_query"}
+
         dispatch = {
             "get_vehicles": lambda a: self._geotab.get_vehicles(limit=a.get("limit", 500)),
             "get_vehicle_details": lambda a: self._geotab.get_vehicle_details(a["device_id"]),
             "get_vehicle_location": lambda a: self._geotab.get_vehicle_location(a["device_id"]),
+            "get_fleet_status": lambda a: self._get_fleet_status(a),
             "get_trips": lambda a: self._geotab.get_trips(
                 device_id=a["device_id"],
                 from_date=a.get("from_date"),
@@ -410,10 +459,7 @@ class GeminiChat:
                 device_id=a.get("device_id"),
                 limit=a.get("limit", 200),
             ),
-            "ace_query": lambda a: self._geotab.ace_query(
-                question=a["question"],
-                timeout=a.get("timeout", 90),
-            ),
+            # ace_query removed — too slow, causes timeouts
             "create_zone": lambda a: self._create_zone_helper(a),
             "send_text_message": lambda a: self._geotab.send_text_message(
                 device_id=a["device_id"],
@@ -423,21 +469,40 @@ class GeminiChat:
         fn = dispatch.get(name)
         if not fn:
             return {"error": f"Unknown tool: {name}"}
+
+        # Build a cache key for this specific tool call
+        _cache_key = f"tool_{name}_{_hl.md5(json.dumps(args, sort_keys=True, default=str).encode()).hexdigest()}"
+
+        # DB-first for read operations: return cached data instantly
+        if name not in _WRITE_OPS:
+            cached = api_tracker.get_cached_response(_cache_key, max_age=0)
+            if cached is None:
+                # Fuzzy match: same tool name, any args (different date formats etc.)
+                cached = api_tracker.get_cached_response_like(f"tool_{name}_")
+            if cached is not None:
+                api_tracker.log_call("cache", name, "db_hit", 0, cached=True)
+                return cached
+
+        # Cache miss or write op — call the live API
         try:
             result = fn(args)
-            # Wrap list results with total count before truncation so the
-            # model knows the real size even when items are trimmed.
+            # Wrap list results with total count before truncation
             if isinstance(result, list):
                 total = len(result)
                 truncated = self._truncate(result)
-                return {
+                final = {
                     "total_count": total,
                     "returned_count": len(truncated) if isinstance(truncated, list) else total,
                     "data": truncated,
                     "truncated": total > (len(truncated) if isinstance(truncated, list) else total),
                 }
+                if name not in _WRITE_OPS:
+                    api_tracker.cache_response(_cache_key, final, 300)
+                return final
             if isinstance(result, dict):
                 result = self._truncate(result)
+            if name not in _WRITE_OPS:
+                api_tracker.cache_response(_cache_key, result, 300)
             return result
         except Exception as e:
             return {"error": str(e)}
@@ -469,21 +534,23 @@ class GeminiChat:
         ))
 
         # Function calling loop
-        for _ in range(self.MAX_TOOL_ROUNDS):
-            import time as _time
+        import time as _time
+        for round_num in range(self.MAX_TOOL_ROUNDS):
+            print(f"[chat] round {round_num + 1}/{self.MAX_TOOL_ROUNDS} — calling Gemini...", flush=True)
             t0 = _time.monotonic()
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=contents,
                 config=genai_types.GenerateContentConfig(
                     system_instruction=system,
-                    temperature=0.4,
-                    max_output_tokens=1024,
+                    temperature=0.3,
+                    max_output_tokens=2048,
                     tools=[self._tool_config],
                 ),
             )
             ms = int((_time.monotonic() - t0) * 1000)
             api_tracker.log_call("gemini", "chat", "success", ms)
+            print(f"[chat] round {round_num + 1} Gemini responded in {ms}ms", flush=True)
 
             # Check if the response contains function calls
             candidate = response.candidates[0]
@@ -494,7 +561,10 @@ class GeminiChat:
 
             if not function_calls:
                 # No function calls — return the text response
-                return response.text or "I couldn't generate a response."
+                txt = response.text or "I couldn't generate a response."
+                fr = getattr(candidate, "finish_reason", "unknown")
+                print(f"[chat] done — text response ({len(txt)} chars, finish={fr})", flush=True)
+                return txt
 
             # Append the model's response (with function calls) to contents
             contents.append(candidate.content)
@@ -503,7 +573,12 @@ class GeminiChat:
             function_responses = []
             for part in function_calls:
                 fc = part.function_call
+                print(f"[chat]   tool: {fc.name}({dict(fc.args) if fc.args else {}})", flush=True)
+                t_tool = _time.monotonic()
                 result = self._execute_tool(fc.name, dict(fc.args) if fc.args else {})
+                t_tool_ms = int((_time.monotonic() - t_tool) * 1000)
+                result_size = len(json.dumps(result, default=str)) if result else 0
+                print(f"[chat]   tool done: {t_tool_ms}ms, {result_size} bytes", flush=True)
                 function_responses.append(
                     genai_types.Part.from_function_response(
                         name=fc.name,
