@@ -341,6 +341,167 @@ body {
     margin-top: 2px;
 }
 
+/* ── Zone Intelligence ───────────────────────────────────────────────── */
+
+.zone-section {
+    padding: 16px 20px 0;
+    flex: 0 0 auto;
+    min-height: 0;
+}
+
+.zone-actions {
+    margin-bottom: 8px;
+}
+
+.zone-btn {
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border-glass);
+    background: rgba(139, 92, 246, 0.1);
+    color: #a78bfa;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: var(--font);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.zone-btn:hover {
+    background: rgba(139, 92, 246, 0.2);
+    border-color: rgba(139, 92, 246, 0.4);
+}
+
+.zone-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.zone-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+    padding-bottom: 12px;
+}
+
+.zone-empty {
+    text-align: center;
+    padding: 12px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.zone-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-left: 3px solid var(--zone-color, #8b5cf6);
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.zone-item:hover {
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.zone-item-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.zone-item-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.zone-item-meta {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.zone-type-badge {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: rgba(139, 92, 246, 0.15);
+    color: #a78bfa;
+    white-space: nowrap;
+}
+
+.zone-type-badge.depot { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+.zone-type-badge.risk { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+.zone-type-badge.delivery { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+.zone-type-badge.service { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+.zone-type-badge.custom { background: rgba(139, 92, 246, 0.15); color: #a78bfa; }
+
+.zone-delete-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    line-height: 1;
+    transition: color 0.15s, background 0.15s;
+}
+
+.zone-delete-btn:hover {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.1);
+}
+
+/* Suggestion items — dashed border */
+.zone-item.zone-suggestion {
+    border-style: dashed;
+    border-left-style: dashed;
+    background: rgba(139, 92, 246, 0.04);
+}
+
+.zone-create-btn {
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    background: rgba(16, 185, 129, 0.1);
+    color: #34d399;
+    font-size: 10px;
+    font-weight: 600;
+    font-family: var(--font);
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+}
+
+.zone-create-btn:hover {
+    background: rgba(16, 185, 129, 0.2);
+}
+
+/* Light theme overrides */
+[data-theme="light"] .zone-item {
+    background: rgba(0, 0, 0, 0.02);
+    border-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .zone-item:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .zone-btn {
+    background: rgba(139, 92, 246, 0.08);
+}
+
 /* ── Detail Panel ────────────────────────────────────────────────────── */
 
 .detail-panel {
