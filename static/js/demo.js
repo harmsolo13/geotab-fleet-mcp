@@ -406,6 +406,7 @@ function runNextDemoStep() {
             if (!demoRunning) return;
             demoVoiceQuery(step.voiceQuery, () => {
                 if (!demoRunning) return;
+                chatSending = false; // Force-reset in case prior query hasn't fully cleared
                 sendMessage();
                 const t = setTimeout(runNextDemoStep, step.pauseAfter || 500);
                 demoTimeouts.push(t);
