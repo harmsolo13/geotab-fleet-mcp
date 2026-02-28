@@ -1323,6 +1323,10 @@ async function sendMessage() {
                 showToast("Zone created — refreshing map zones", "success");
                 loadZones(true);
             }
+            if (lower.includes("zone") && (lower.includes("deleted") || lower.includes("removed"))) {
+                showToast("Zone deleted — refreshing map zones", "success");
+                loadZones(true);
+            }
             if (lower.includes("message") && lower.includes("sent")) {
                 showToast("Text message sent to vehicle", "success");
             }
