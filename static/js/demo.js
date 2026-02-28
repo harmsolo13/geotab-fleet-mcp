@@ -495,14 +495,10 @@ function stopDemo() {
         suggestionCircles.forEach(c => { if (c) c.setMap(null); });
         suggestionCircles = [];
     }
-    // Delete demo-created zone from Geotab + clear map overlays
+    // Clear map overlays and reload zones
     zonePolygons.forEach(p => p.setMap(null));
     zonePolygons = [];
-    fetch("/api/zones/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Fleet Operations Zone" }),
-    }).then(() => loadZones(true)).catch(() => {});
+    loadZones(true);
     fitAllVehicles();
     showToast("Demo ended", "info", 2000);
 }
@@ -518,7 +514,7 @@ function buildDemoSteps() {
     // Opening
     demoStep(
         "Fleet Command Center — Live Dashboard",
-        "Thank you. This is GeotabVibe — a Fleet Command Center built on the Geotab SDK with Google Maps and Gemini AI. It also includes an MCP server, allowing any AI assistant to connect and manage the fleet through natural language. As you just saw, we can control everything by voice. Let's take a tour.",
+        "Thank you. This is GeotabVibe — a Fleet Command Center built on the Geotab SDK with Google Maps and Gemini AI. Let's take a tour of the dashboard.",
         null,
         0
     );
@@ -749,7 +745,7 @@ function buildDemoSteps() {
     // Fleet Assistant — open chat
     demoStep(
         "Fleet Assistant — AI chat with Gemini",
-        "The Fleet Assistant is a conversational AI powered by Gemini with function calling. It has access to 12 Geotab API tools — vehicles, trips, faults, drivers, zones, fuel transactions, exceptions, and Ace AI.",
+        "The Fleet Assistant is a conversational AI powered by Gemini with function calling. It has access to 12 Geotab API tools — vehicles, trips, faults, drivers, zones, fuel transactions, exceptions, and Ace AI. GeotabVibe also includes an MCP server, allowing any external AI assistant to connect and manage the fleet through natural language.",
         () => { if (!chatOpen) toggleChat(); },
         0
     );
@@ -809,7 +805,7 @@ function buildDemoSteps() {
     // Send driver message — action command
     DEMO_STEPS.push({
         label: "Action: Send message to driver",
-        narration: "The assistant can send messages directly to in-cab devices. This triggers a text message function call to the vehicle's Geotab GO device.",
+        narration: "The assistant can also send messages directly to in-cab devices. This triggers a text message function call to the vehicle's Geotab GO device.",
         action: () => {
             chatSending = false;
             window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
@@ -829,32 +825,6 @@ function buildDemoSteps() {
             return assistantBubbles.length > (window._demoAssistantCount || 0);
         },
         resultNarration: "Message sent successfully. The text was delivered directly to the vehicle's in-cab Geotab device via the API.",
-        waitTimeout: 90000
-    });
-
-    // Geofence creation — action command (coords near fleet depot, 2km radius for visibility)
-    DEMO_STEPS.push({
-        label: "Action: Create a geofence zone",
-        narration: "Finally, asking it to create a geofence triggers a zone creation function call. The zone appears on the map immediately.",
-        action: () => {
-            chatSending = false;
-            window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
-        },
-        voiceQuery: "Create a geofence called Fleet Operations Zone at 43.52, -79.69 with a 2km radius",
-        pauseAfter: 0,
-    });
-
-    // Wait for geofence response
-    DEMO_STEPS.push({
-        label: "Waiting for AI response...",
-        narration: null,
-        action: null,
-        pauseAfter: 500,
-        waitFor: () => {
-            const assistantBubbles = document.querySelectorAll("#chatMessages .chat-bubble.assistant");
-            return assistantBubbles.length > (window._demoAssistantCount || 0);
-        },
-        resultNarration: "The geofence was created and is now visible on the map as a large red zone boundary covering the fleet's operating area. This was a live API call to the Geotab platform.",
         waitTimeout: 90000
     });
 
@@ -881,6 +851,20 @@ function buildDemoSteps() {
         resultNarration: "Gemini analyzed the trip stop clusters and generated intelligent zone names, types, and reasoning. If Ace responded in time, you'll see a purple Ace badge with fleet validation insights. You can create any suggestion with one click.",
         waitTimeout: 60000
     });
+
+    // Zone Alerts — entry/exit monitoring
+    demoStep(
+        "Zone Alerts — entry and exit monitoring",
+        "Each zone now has a bell icon for entry and exit alerts. Risk zones automatically enable alerts when created. The system checks every 10 seconds whether vehicles have entered or exited a monitored zone — and fires a toast notification on any state change. Zero additional API calls — all computed client-side from existing data.",
+        () => {
+            // Toggle alert on the first zone if available
+            const firstZone = zoneData.find(z => z.id);
+            if (firstZone) {
+                toggleZoneAlert(firstZone.id, firstZone.name || "Zone", true);
+            }
+        },
+        0
+    );
 
     // Theme Toggle
     demoStep(
