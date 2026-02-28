@@ -539,6 +539,39 @@ body {
     letter-spacing: 0.5px;
 }
 
+/* Zone alert toggle */
+.zone-alert-toggle {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.zone-alert-toggle:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.zone-alert-toggle input[type="checkbox"] {
+    display: none;
+}
+
+.zone-alert-icon {
+    font-size: 14px;
+    opacity: 0.35;
+    transition: opacity 0.2s;
+    line-height: 1;
+}
+
+.zone-alert-toggle input:checked + .zone-alert-icon {
+    opacity: 1;
+}
+
+[data-theme="light"] .zone-alert-toggle:hover {
+    background: rgba(0, 0, 0, 0.04);
+}
+
 /* Light theme overrides */
 [data-theme="light"] .zone-item {
     background: rgba(0, 0, 0, 0.02);
@@ -720,6 +753,256 @@ body {
     font-size: 12px;
     color: var(--text-muted);
     padding: 8px 0;
+}
+
+/* ── Vehicle Events Sidebar Button ──────────────────────────────────── */
+
+.vehicle-events-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid var(--border-glass);
+    background: rgba(139, 92, 246, 0.08);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.15s;
+    padding: 0;
+}
+
+.vehicle-events-btn:hover {
+    background: rgba(139, 92, 246, 0.2);
+    border-color: rgba(139, 92, 246, 0.4);
+    color: #a78bfa;
+}
+
+.vehicle-events-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* ── Events Tab Content (.ev-* prefix) ──────────────────────────────── */
+
+.ev-header {
+    margin-bottom: 16px;
+}
+
+.ev-header h3 {
+    font-size: 16px;
+    font-weight: 700;
+    margin: 0 0 4px;
+}
+
+.ev-header-status {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.ev-trip {
+    border: 1px solid var(--border-glass);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    margin-bottom: 12px;
+    overflow: hidden;
+}
+
+.ev-trip-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-glass);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.ev-trip-time {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.ev-trip-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    padding: 10px 14px;
+}
+
+.ev-stat {
+    text-align: center;
+}
+
+.ev-stat-val {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.ev-stat-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.ev-exceptions {
+    padding: 0 14px 10px;
+}
+
+.ev-exceptions-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.ev-exc-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 0;
+    font-size: 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+
+.ev-exc-item:last-child { border-bottom: none; }
+
+.ev-exc-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.ev-exc-dot.red { background: var(--accent-red); box-shadow: 0 0 4px var(--accent-red); }
+.ev-exc-dot.amber { background: var(--accent-yellow); box-shadow: 0 0 4px var(--accent-yellow); }
+.ev-exc-dot.yellow { background: #facc15; }
+
+.ev-exc-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    flex: 1;
+}
+
+.ev-exc-time {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.ev-waypoints {
+    padding: 0 14px 10px;
+}
+
+.ev-waypoints-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.ev-waypoint {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.15s;
+}
+
+.ev-waypoint:hover {
+    background: rgba(74, 158, 255, 0.08);
+}
+
+.ev-waypoint:last-child {
+    border-bottom: none;
+}
+
+.ev-waypoint-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-blue);
+    flex-shrink: 0;
+}
+
+.ev-waypoint-time {
+    flex: 1;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.ev-waypoint-coords {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: monospace;
+}
+
+.ev-stop-pin {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid var(--accent-blue);
+    color: var(--accent-blue);
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.ev-unmatched-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    margin: 20px 0 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-glass);
+}
+
+.ev-btn {
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-glass);
+    background: rgba(74, 158, 255, 0.1);
+    color: var(--accent-blue);
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--font);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.ev-btn:hover {
+    background: rgba(74, 158, 255, 0.2);
+    border-color: rgba(74, 158, 255, 0.4);
+}
+
+.ev-btn.purple {
+    background: rgba(139, 92, 246, 0.1);
+    color: #a78bfa;
+}
+
+.ev-btn.purple:hover {
+    background: rgba(139, 92, 246, 0.2);
+    border-color: rgba(139, 92, 246, 0.4);
+}
+
+.ev-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-muted);
+    font-size: 13px;
 }
 
 /* ── Sidebar Footer ──────────────────────────────────────────────────── */
@@ -1174,6 +1457,39 @@ select, select option {
 [data-theme="light"] .events-load-btn {
     background: rgba(124, 58, 237, 0.1);
     color: #7c3aed;
+}
+
+[data-theme="light"] .vehicle-events-btn {
+    background: rgba(124, 58, 237, 0.06);
+    border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .vehicle-events-btn:hover {
+    background: rgba(124, 58, 237, 0.15);
+    border-color: rgba(124, 58, 237, 0.3);
+    color: #7c3aed;
+}
+
+[data-theme="light"] .ev-trip {
+    background: rgba(0, 0, 0, 0.02);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .ev-trip-header {
+    background: rgba(0, 0, 0, 0.02);
+    border-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .ev-exc-item {
+    border-color: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .ev-waypoint {
+    border-color: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .ev-waypoint:hover {
+    background: rgba(43, 125, 233, 0.06);
 }
 
 [data-theme="light"] ::-webkit-scrollbar-thumb {

@@ -352,9 +352,31 @@ def api_zones_delete():
         # Invalidate zone cache
         _cache_store.pop("api_zones", None)
         api_tracker.delete_cached_response("api_zones")
+        # Clean up alert config for deleted zone
+        api_tracker.delete_zone_alert_by_name(name)
         return jsonify({"deleted": deleted, "name": name})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/zone-alerts/config", methods=["GET"])
+def api_zone_alerts_config_get():
+    """Return all zone alert configurations."""
+    configs = api_tracker.get_zone_alert_config()
+    return jsonify({"configs": configs})
+
+
+@app.route("/api/zone-alerts/config", methods=["POST"])
+def api_zone_alerts_config_set():
+    """Upsert a zone alert configuration."""
+    data = request.get_json(silent=True) or {}
+    zone_id = data.get("zone_id")
+    zone_name = data.get("zone_name", "")
+    enabled = data.get("enabled", True)
+    if not zone_id:
+        return jsonify({"error": "zone_id is required"}), 400
+    api_tracker.set_zone_alert(zone_id, zone_name, bool(enabled))
+    return jsonify({"ok": True, "zone_id": zone_id, "enabled": bool(enabled)})
 
 
 @app.route("/api/zones")
@@ -737,6 +759,10 @@ def api_zones_create_suggestion():
         # Invalidate zone cache
         _cache_store.pop("api_zones", None)
         api_tracker.delete_cached_response("api_zones")
+        # Auto-enable alerts for risk zones
+        zone_type = data.get("type", "custom")
+        if zone_type == "risk" or any(kw in name.lower() for kw in ("risk", "speed", "hazard", "collision")):
+            api_tracker.set_zone_alert(zone_id, name, True)
         return jsonify({"zone_id": zone_id, "name": name})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

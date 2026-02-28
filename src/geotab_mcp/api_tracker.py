@@ -53,6 +53,15 @@ def init_db() -> None:
             ttl_seconds INTEGER NOT NULL
         )
     """)
+    # Zone alert configuration — tracks which zones have entry/exit alerts enabled
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS zone_alerts (
+            zone_id       TEXT PRIMARY KEY,
+            zone_name     TEXT NOT NULL,
+            alerts_enabled INTEGER NOT NULL DEFAULT 1,
+            created_at    REAL NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -209,3 +218,53 @@ def clear_response_cache() -> int:
     conn.commit()
     conn.close()
     return count
+
+
+# ── Zone Alert Configuration ─────────────────────────────────────────────
+
+def get_zone_alert_config() -> list[dict]:
+    """Return all zone alert configurations."""
+    try:
+        conn = _get_db()
+        rows = conn.execute("SELECT zone_id, zone_name, alerts_enabled FROM zone_alerts").fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def set_zone_alert(zone_id: str, zone_name: str, enabled: bool) -> None:
+    """Upsert a zone alert configuration."""
+    try:
+        conn = _get_db()
+        conn.execute(
+            "INSERT OR REPLACE INTO zone_alerts (zone_id, zone_name, alerts_enabled, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (zone_id, zone_name, 1 if enabled else 0, time.time()),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def delete_zone_alert(zone_id: str) -> None:
+    """Remove a zone alert configuration by zone_id."""
+    try:
+        conn = _get_db()
+        conn.execute("DELETE FROM zone_alerts WHERE zone_id = ?", (zone_id,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def delete_zone_alert_by_name(zone_name: str) -> None:
+    """Remove zone alert configurations matching a zone name."""
+    try:
+        conn = _get_db()
+        conn.execute("DELETE FROM zone_alerts WHERE zone_name = ?", (zone_name,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
