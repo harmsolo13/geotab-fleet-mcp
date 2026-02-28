@@ -226,6 +226,7 @@ body {
     transition: transform 0.2s;
     color: var(--text-muted);
 }
+.section.collapsed { flex: 0 0 auto; overflow: hidden; }
 .section.collapsed .section-chevron { transform: rotate(-90deg); }
 .section.collapsed .section-body { display: none; }
 
