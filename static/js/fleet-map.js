@@ -1323,8 +1323,8 @@ async function sendMessage() {
                 showToast("Zone created — refreshing map zones", "success");
                 loadZones(true);
             }
-            if (lower.includes("zone") && (lower.includes("deleted") || lower.includes("removed"))) {
-                showToast("Zone deleted — refreshing map zones", "success");
+            if (lower.includes("zone") && (lower.includes("delet") || lower.includes("remov") || lower.includes("no zone") || lower.includes("not found"))) {
+                showToast("Zone update — refreshing map", "info");
                 loadZones(true);
             }
             if (lower.includes("message") && lower.includes("sent")) {
