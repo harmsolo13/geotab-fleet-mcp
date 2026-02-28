@@ -1295,7 +1295,7 @@ function checkZoneAlerts() {
                     const z = zoneData.find(x => x.id === zoneId);
                     if (v && z) {
                         const action = now === "inside" ? "entered" : "exited";
-                        showZoneAlert(shortName(v), z.name || "Unknown Zone", action, z.zoneType || "custom");
+                        showZoneAlert(shortName(v), z.name || "Unknown Zone", action, z.zoneType || "custom", deviceId, z.id);
                     }
                 }
             });
@@ -1306,11 +1306,21 @@ function checkZoneAlerts() {
     alertsInitialized = true;
 }
 
-function showZoneAlert(vehicleName, zoneName, action, zoneType) {
+function showZoneAlert(vehicleName, zoneName, action, zoneType, deviceId, zoneId) {
     const arrow = action === "entered" ? "&#9654;" : "&#9664;";
     const type = zoneType === "risk" ? "warning" : "info";
     const msg = `${arrow} <b>${escapeHTML(vehicleName)}</b> ${action} <b>${escapeHTML(zoneName)}</b>`;
     showToast(msg, type, 6000);
+    // Persist event to backend
+    fetch("/api/zone-alerts/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            device_id: deviceId, device_name: vehicleName,
+            zone_id: zoneId, zone_name: zoneName,
+            zone_type: zoneType, action
+        }),
+    }).catch(() => {});
 }
 
 async function toggleZoneAlert(zoneId, zoneName, enabled) {

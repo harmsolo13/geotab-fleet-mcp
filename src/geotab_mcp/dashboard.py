@@ -379,6 +379,30 @@ def api_zone_alerts_config_set():
     return jsonify({"ok": True, "zone_id": zone_id, "enabled": bool(enabled)})
 
 
+@app.route("/api/zone-alerts/events", methods=["POST"])
+def api_zone_events_log():
+    """Log a zone entry/exit event from the frontend."""
+    data = request.get_json(silent=True) or {}
+    api_tracker.log_zone_event(
+        device_id=data.get("device_id", ""),
+        device_name=data.get("device_name", ""),
+        zone_id=data.get("zone_id", ""),
+        zone_name=data.get("zone_name", ""),
+        zone_type=data.get("zone_type"),
+        action=data.get("action", ""),
+    )
+    return jsonify({"ok": True})
+
+
+@app.route("/api/zone-alerts/events", methods=["GET"])
+def api_zone_events_get():
+    """Return recent zone alert events + summary."""
+    hours = int(request.args.get("hours", 24))
+    events = api_tracker.get_zone_events(hours=hours)
+    summary = api_tracker.get_zone_event_summary(hours=hours)
+    return jsonify({"events": events, "summary": summary})
+
+
 @app.route("/api/zones")
 def api_zones():
     """All geofence zones (cached)."""
@@ -1141,6 +1165,32 @@ def _build_fallback_report(report_data: dict, ace_insight: str) -> str:
             f"<td>{v['idle_hours']}h</td><td>{v['max_speed_kmh']} km/h</td></tr>"
         )
 
+    # Safety & Compliance section
+    exc_sum = report_data.get("exception_summary", {})
+    zone_act = report_data.get("zone_activity", {})
+    exc_rows = ""
+    for etype, cnt in exc_sum.get("by_type", {}).items():
+        color = "#f87171" if "collision" in etype.lower() else "#f59e0b"
+        exc_rows += f'<tr><td style="padding:4px 8px">{etype}</td><td style="padding:4px 8px;color:{color};font-weight:600">{cnt}</td></tr>'
+    offender_items = "".join(
+        f"<li>{o['name']} — {o['count']} events</li>"
+        for o in exc_sum.get("top_offenders", [])
+    )
+    zone_entries = zone_act.get("total_entries", 0)
+    zone_exits = zone_act.get("total_exits", 0)
+    if zone_entries or zone_exits:
+        zone_note = f"{zone_entries} entries, {zone_exits} exits across {zone_act.get('monitored_zones', 0)} monitored zones."
+    else:
+        zone_note = "Zone monitoring active — no incidents recorded."
+
+    safety_html = f"""
+      <h3 style="color:#4a9eff">Safety & Compliance</h3>
+      <p style="color:#1a1a2e;font-size:13px"><strong>{exc_sum.get('total', 0)}</strong> exception events recorded.</p>
+      {'<table style="width:100%;border-collapse:collapse;font-size:13px;margin:8px 0"><tr style="border-bottom:1px solid #ddd"><th style="text-align:left;padding:4px 8px;color:#8892a8">Type</th><th style="text-align:left;padding:4px 8px;color:#8892a8">Count</th></tr>' + exc_rows + '</table>' if exc_rows else ''}
+      {'<p style="color:#1a1a2e;font-size:13px"><strong>Top offenders:</strong></p><ul style="font-size:13px;color:#1a1a2e">' + offender_items + '</ul>' if offender_items else ''}
+      <p style="color:#1a1a2e;font-size:13px"><strong>Zone Activity:</strong> {zone_note}</p>
+    """
+
     # Ace section — show any real response prominently
     if ace_insight and len(ace_insight.strip()) > 20:
         ace_html = (
@@ -1197,6 +1247,8 @@ def _build_fallback_report(report_data: dict, ace_insight: str) -> str:
           <th style="text-align:left;padding:6px;color:#8892a8">Idle</th>
           <th style="text-align:left;padding:6px;color:#8892a8">Max Speed</th>
         </tr>{rows}</table>
+
+      {safety_html}
 
       {ace_html}
 
@@ -1268,10 +1320,30 @@ def api_report():
             except Exception:
                 return {"count": 0, "faults": []}
 
-        # Run trip + fault fetches in parallel
-        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        def _fetch_exceptions():
+            cached = _cache_get("api_exceptions")
+            if cached is not None:
+                return cached
+            try:
+                exc_list = client.get_exception_events(limit=200)
+                result = {"count": len(exc_list), "events": exc_list}
+                _cache_set("api_exceptions", result, "exceptions")
+                return result
+            except Exception:
+                return {"count": 0, "events": []}
+
+        def _fetch_zone_summary():
+            return api_tracker.get_zone_event_summary(24)
+
+        # Run trip + fault + exception + zone fetches in parallel
+        exceptions_data = {"count": 0, "events": []}
+        zone_summary = {"total_entries": 0, "total_exits": 0, "by_zone": [], "by_vehicle": []}
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
             trip_futures = {pool.submit(_fetch_vehicle_trips, v): v for v in sample}
             faults_future = pool.submit(_fetch_faults)
+            exceptions_future = pool.submit(_fetch_exceptions)
+            zone_summary_future = pool.submit(_fetch_zone_summary)
 
             for f in concurrent.futures.as_completed(trip_futures):
                 result = f.result()
@@ -1279,6 +1351,8 @@ def api_report():
                     vehicle_summaries.append(result)
 
             faults_data = faults_future.result()
+            exceptions_data = exceptions_future.result()
+            zone_summary = zone_summary_future.result()
 
         # Ace AI: skip for demo dataset (unreliable, adds 15-60s for refusals)
         # The hardcoded fallback below provides consistent, presentation-grade insights
@@ -1316,6 +1390,17 @@ def api_report():
                 "4. Schedule preventive maintenance for heavy trucks approaching 5,000 engine-hour intervals"
             )
 
+        # Build exception summary from raw events
+        exc_events = exceptions_data.get("events", [])
+        by_type: dict[str, int] = {}
+        by_driver: dict[str, int] = {}
+        for ev in exc_events:
+            rule = ev.get("ruleName") or ev.get("rule", "Unknown")
+            by_type[rule] = by_type.get(rule, 0) + 1
+            dname = ev.get("deviceName") or ev.get("device", "Unknown")
+            by_driver[dname] = by_driver.get(dname, 0) + 1
+        top_offenders = sorted(by_driver.items(), key=lambda x: x[1], reverse=True)[:5]
+
         # Build data payload for Gemini
         report_data = {
             "fleet_size": len(vehicles),
@@ -1324,6 +1409,17 @@ def api_report():
             "total_faults": faults_data["count"],
             "sample_faults": faults_data.get("faults", [])[:10],
             "ace_insights": ace_insight,
+            "exception_summary": {
+                "total": len(exc_events),
+                "by_type": by_type,
+                "top_offenders": [{"name": n, "count": c} for n, c in top_offenders],
+            },
+            "zone_activity": {
+                "total_entries": zone_summary.get("total_entries", 0),
+                "total_exits": zone_summary.get("total_exits", 0),
+                "monitored_zones": len(zone_summary.get("by_zone", [])),
+                "by_zone": zone_summary.get("by_zone", []),
+            },
         }
 
         # Ask Gemini to generate the report
@@ -1334,7 +1430,7 @@ def api_report():
         ace_has_content = bool(ace_insight and len(ace_insight.strip()) > 20)
         if ace_has_content:
             ace_instruction = (
-                "5. **Geotab Ace AI Analysis** — This is CRITICAL. Display the following Ace AI analysis "
+                "6. **Geotab Ace AI Analysis** — This is CRITICAL. Display the following Ace AI analysis "
                 "in a styled card. Use: border-left:4px solid #a78bfa, "
                 "background:rgba(167,139,250,0.12), padding:16px 20px, color:inherit (NOT a light color — "
                 "the page may be in light mode). "
@@ -1345,7 +1441,7 @@ def api_report():
             )
         else:
             ace_instruction = (
-                "5. Geotab Ace AI Analysis — Note that Ace AI was unavailable for this report. "
+                "6. Geotab Ace AI Analysis — Note that Ace AI was unavailable for this report. "
                 "Show a brief note that Ace AI insights will be available in the next report cycle.\n"
             )
 
@@ -1361,14 +1457,18 @@ def api_report():
             "2. Fleet Overview (vehicle count, total distance in km, trips, driving hours)\n"
             "3. Top Performers (highest distance, most trips)\n"
             "4. Anomalies & Concerns (high idle, faults, excessive speed)\n"
+            "5. Safety & Compliance — exception event breakdown by type (use an HTML table with "
+            "red #f87171 for collision events, amber #f59e0b for driving violations). "
+            "Show top offending vehicles. Include zone monitoring activity (entries/exits across "
+            "monitored zones). If no zone events, note that zone monitoring is active with no incidents.\n"
             + ace_instruction +
-            "6. Recommendations (3-5 actionable items)\n\n"
+            "7. Recommendations (3-5 actionable items)\n\n"
             "Use a clean, modern LIGHT theme style — white background (#ffffff), dark text (#1a1a2e). "
             "Return ONLY raw HTML — no markdown, no ```html fences, no <html>/<head> tags. Just the styled div content. "
             "Use colors: blue #4a9eff for headers, green #34d399 for positive, red #f87171 for alerts. "
             "All text must be dark (#1a1a2e or #333). Never use light/white text or dark backgrounds.\n"
-            "Make section 5 (Ace AI) visually prominent — use a colored border-left or background card.\n"
-            "Keep the report concise — aim for under 3000 characters of HTML. No filler text."
+            "Make section 6 (Ace AI) visually prominent — use a colored border-left or background card.\n"
+            "Keep the report concise — aim for under 4000 characters of HTML. No filler text."
         )
         analysis = gemini.analyze_fleet(report_data, question=prompt, max_tokens=4096)
 
