@@ -377,6 +377,92 @@ class GeotabClient:
             })
         return results
 
+    def get_gps_for_exceptions(self, exceptions: list[dict]) -> list[dict]:
+        """Batch-fetch GPS coordinates for exception events using multi_call.
+
+        For each exception, fetches 1 LogRecord within a ±2 min window around
+        activeFrom. Uses a single multi_call API roundtrip for all devices.
+        Returns the same list with lat/lng populated where GPS data exists.
+        """
+        if not exceptions:
+            return exceptions
+
+        # Group exceptions by deviceId
+        by_device: dict[str, list[dict]] = {}
+        for evt in exceptions:
+            did = evt.get("deviceId")
+            if did:
+                by_device.setdefault(did, []).append(evt)
+
+        # Build one LogRecord Get call per exception (±2 min window, limit 1)
+        calls: list[tuple[str, dict]] = []
+        call_index: list[dict] = []  # parallel list mapping call index -> exception
+        for device_id, evts in by_device.items():
+            for evt in evts:
+                active_from = evt.get("activeFrom", "")
+                if not active_from:
+                    continue
+                try:
+                    t = datetime.fromisoformat(active_from.replace("Z", "+00:00"))
+                except (ValueError, TypeError):
+                    continue
+                from_dt = (t - timedelta(minutes=2)).isoformat()
+                to_dt = (t + timedelta(minutes=2)).isoformat()
+                calls.append(("Get", {
+                    "typeName": "LogRecord",
+                    "search": {
+                        "deviceSearch": {"id": device_id},
+                        "fromDate": from_dt,
+                        "toDate": to_dt,
+                    },
+                    "resultsLimit": 5,
+                }))
+                call_index.append(evt)
+
+        if not calls:
+            return exceptions
+
+        # Single API roundtrip for all exceptions
+        try:
+            with api_tracker.track("geotab", "multi_call_gps_exceptions"):
+                results = self.api.multi_call(calls)
+        except Exception as e:
+            print(f"[exceptions] multi_call GPS batch failed: {e}", flush=True)
+            return exceptions
+
+        # Match closest LogRecord to each exception by timestamp
+        located = 0
+        for i, records in enumerate(results):
+            evt = call_index[i]
+            if not records:
+                continue
+            evt_time = evt.get("activeFrom", "")
+            best_rec = None
+            best_diff = float("inf")
+            for r in records:
+                lat = r.get("latitude")
+                lng = r.get("longitude")
+                if lat is None or lng is None or (lat == 0 and lng == 0):
+                    continue
+                try:
+                    rt = datetime.fromisoformat(
+                        str(r.get("dateTime", "")).replace("Z", "+00:00")
+                    )
+                    et = datetime.fromisoformat(evt_time.replace("Z", "+00:00"))
+                    diff = abs((rt - et).total_seconds())
+                except (ValueError, TypeError):
+                    diff = 0
+                if diff < best_diff:
+                    best_diff = diff
+                    best_rec = r
+            if best_rec:
+                evt["lat"] = best_rec.get("latitude")
+                evt["lng"] = best_rec.get("longitude")
+                located += 1
+
+        print(f"[exceptions] Batch GPS enrichment: {located}/{len(call_index)} located", flush=True)
+        return exceptions
+
     def create_zone(
         self,
         name: str,

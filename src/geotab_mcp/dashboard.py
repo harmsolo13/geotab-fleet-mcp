@@ -377,6 +377,83 @@ def api_zones():
         return jsonify({"error": str(e)}), 500
 
 
+def _haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Return distance in metres between two lat/lng points."""
+    R = 6371000
+    rlat1, rlat2 = math.radians(lat1), math.radians(lat2)
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(rlat1) * math.cos(rlat2) * math.sin(dlng / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _abs_time_diff(dt1: str, dt2: str) -> float:
+    """Absolute seconds between two ISO datetime strings."""
+    from datetime import datetime
+    try:
+        t1 = datetime.fromisoformat(dt1.replace("Z", "+00:00"))
+        t2 = datetime.fromisoformat(dt2.replace("Z", "+00:00"))
+        return abs((t1 - t2).total_seconds())
+    except Exception:
+        return float("inf")
+
+
+def _detect_stops_from_gps(points: list[dict]) -> list[dict]:
+    """Detect stops from GPS log records (server-side equivalent of JS _detectStops).
+
+    Input: list of {lat, lng, speed, dateTime} dicts.
+    Output: list of {lat, lng, duration_sec} for detected stops.
+    """
+    if not points or len(points) < 2:
+        return []
+    stops = []
+    in_stop = False
+    stop_start = None
+    stop_lats: list[float] = []
+    stop_lngs: list[float] = []
+
+    for i, p in enumerate(points):
+        speed = p.get("speed") or 0
+        if speed < 5:
+            if not in_stop:
+                in_stop = True
+                stop_start = p
+                stop_lats = [p.get("lat", 0)]
+                stop_lngs = [p.get("lng", 0)]
+            else:
+                stop_lats.append(p.get("lat", 0))
+                stop_lngs.append(p.get("lng", 0))
+        elif in_stop:
+            prev = points[i - 1] if i > 0 else stop_start
+            duration = _abs_time_diff(stop_start.get("dateTime", ""), prev.get("dateTime", ""))
+            if duration >= 20:
+                avg_lat = sum(stop_lats) / len(stop_lats)
+                avg_lng = sum(stop_lngs) / len(stop_lngs)
+                stops.append({"lat": avg_lat, "lng": avg_lng, "duration_sec": duration})
+            in_stop = False
+
+    # Close trailing stop
+    if in_stop and stop_start:
+        last = points[-1]
+        duration = _abs_time_diff(stop_start.get("dateTime", ""), last.get("dateTime", ""))
+        if duration >= 20:
+            avg_lat = sum(stop_lats) / len(stop_lats)
+            avg_lng = sum(stop_lngs) / len(stop_lngs)
+            stops.append({"lat": avg_lat, "lng": avg_lng, "duration_sec": duration})
+
+    # Merge stops within 100m
+    merged = []
+    for s in stops:
+        if merged and _haversine(merged[-1]["lat"], merged[-1]["lng"], s["lat"], s["lng"]) < 100:
+            prev = merged[-1]
+            prev["lat"] = (prev["lat"] + s["lat"]) / 2
+            prev["lng"] = (prev["lng"] + s["lng"]) / 2
+            prev["duration_sec"] += s["duration_sec"]
+        else:
+            merged.append(dict(s))
+    return merged
+
+
 @app.route("/api/zones/suggest", methods=["POST"])
 def api_zones_suggest():
     """Suggest zones based on fleet trip stop-point clustering."""
@@ -411,6 +488,23 @@ def api_zones_suggest():
                 if lat and lng:
                     stop_points.append((lat, lng))
 
+        # Harvest GPS-derived stops from cached trip-replay data
+        gps_stop_coords: set[tuple[float, float]] = set()
+        for v in vehicles:
+            trip_ck = f"trips_{v['id']}_None_None"
+            trip_data = _cache_get(trip_ck)
+            if not trip_data:
+                continue
+            for trip in (trip_data.get("trips") or []):
+                replay_key = f"replay_{v['id']}_{trip.get('start', '')}_{trip.get('stop', '')}"
+                replay_data = _cache_get(replay_key)
+                if not replay_data:
+                    continue
+                gps_stops = _detect_stops_from_gps(replay_data.get("points") or [])
+                for s in gps_stops:
+                    stop_points.append((s["lat"], s["lng"]))
+                    gps_stop_coords.add((round(s["lat"], 6), round(s["lng"], 6)))
+
         if not stop_points and uncached > 0:
             # No cached data yet — trigger background trip loading for first 20 vehicles
             # and tell the user to try again shortly
@@ -432,13 +526,24 @@ def api_zones_suggest():
 
         # Grid-based clustering (~500m cells)
         cells: dict[tuple, list] = {}
+        gps_counts: dict[tuple, int] = {}  # cell_key -> count of GPS-derived stops
         for lat, lng in stop_points:
             cell_key = (round(lat * 200) / 200, round(lng * 200) / 200)
             cells.setdefault(cell_key, []).append((lat, lng))
+            if (round(lat, 6), round(lng, 6)) in gps_stop_coords:
+                gps_counts[cell_key] = gps_counts.get(cell_key, 0) + 1
 
         # --- Exception event clustering (risk hotspots) ---
         exc_cells: dict[tuple, list] = {}  # cell_key -> list of rule names
         exc_data = _cache_get("api_exceptions")
+        # Invalidate stale cache if it has exceptions but 0 with GPS coords
+        if exc_data is not None:
+            exc_list = exc_data.get("exceptions", [])
+            if exc_list and not any(e.get("lat") for e in exc_list):
+                print("[zone-suggest] Cached exceptions have 0 GPS coords — re-enriching", flush=True)
+                _cache_store.pop("api_exceptions", None)
+                api_tracker.delete_cached_response("api_exceptions")
+                exc_data = None
         if exc_data is None:
             try:
                 events = _get_client().get_exception_events(limit=500)
@@ -463,7 +568,25 @@ def api_zones_suggest():
                         if t["start"] <= evt.get("activeFrom", "") <= t["stop"]:
                             evt["lat"] = t["lat"]
                             evt["lng"] = t["lng"]
+                            # Refine with GPS replay data for precise location
+                            replay_key = f"replay_{evt.get('deviceId')}_{t['start']}_{t['stop']}"
+                            replay_data = _cache_get(replay_key)
+                            if replay_data:
+                                pts = replay_data.get("points") or []
+                                evt_time = evt.get("activeFrom", "")
+                                if pts and evt_time:
+                                    best = min(pts, key=lambda p: _abs_time_diff(p.get("dateTime", ""), evt_time), default=None)
+                                    if best and best.get("lat") and best.get("lng"):
+                                        evt["lat"] = best["lat"]
+                                        evt["lng"] = best["lng"]
                             break
+                # Batch GPS fallback via multi_call for exceptions still missing lat/lng
+                missing = [e for e in events if e.get("lat") is None]
+                if missing:
+                    try:
+                        _get_client().get_gps_for_exceptions(missing)
+                    except Exception as gps_err:
+                        print(f"[zone-suggest] GPS batch fallback error: {gps_err}", flush=True)
                 exc_data = {"count": len(events), "exceptions": events}
                 _cache_set("api_exceptions", exc_data, "exceptions")
             except Exception as e:
@@ -487,6 +610,7 @@ def api_zones_suggest():
                     "lat": round(avg_lat, 6),
                     "lng": round(avg_lng, 6),
                     "stop_count": len(pts),
+                    "gps_stop_count": gps_counts.get((clat, clng), 0),
                     "exception_count": len(exc_rules),
                     "risk_types": list(set(exc_rules)),
                     "radius_m": 500,
@@ -499,6 +623,7 @@ def api_zones_suggest():
                     "lat": round(clat, 6),
                     "lng": round(clng, 6),
                     "stop_count": 0,
+                    "gps_stop_count": 0,
                     "exception_count": len(rules),
                     "risk_types": list(set(rules)),
                     "radius_m": 500,
@@ -525,6 +650,7 @@ def api_zones_suggest():
                     {
                         "lat": s["lat"], "lng": s["lng"],
                         "stop_count": s["stop_count"],
+                        "gps_stop_count": s.get("gps_stop_count", 0),
                         "exception_count": s.get("exception_count", 0),
                         "risk_types": s.get("risk_types", []),
                     }
@@ -533,7 +659,9 @@ def api_zones_suggest():
                 prompt = (
                     "You are a fleet operations analyst. Analyze these vehicle stop/event clusters and return ONLY a JSON array.\n"
                     f"Existing zone names (avoid duplicates): {json.dumps(existing_names)}\n\n"
-                    "Clusters include stop_count (trip endpoints) and exception_count (safety events like speeding, harsh braking, collisions).\n"
+                    "Clusters include stop_count (trip endpoints), gps_stop_count (mid-route delivery/service stops detected from GPS speed data — "
+                    "these indicate active operational locations, not just parking spots), and exception_count (safety events like speeding, harsh braking, collisions).\n"
+                    "A cluster with high gps_stop_count but low stop_count is a busy delivery/service area, not a depot.\n"
                     "Clusters with high exception_count and risk_types should be typed as 'risk' with names reflecting the hazard "
                     '(e.g. "Highway Speeding Corridor", "Intersection Collision Zone").\n\n'
                     "For each cluster, return one object with exactly these keys:\n"
@@ -587,20 +715,6 @@ def api_zones_suggest():
                     s["type"] = "depot" if s["stop_count"] >= 8 else "delivery" if s["stop_count"] >= 5 else "service"
                     s["name"] = f"Frequent Stop Area {i + 1}"
                 s["reasoning"] = ""
-
-        # --- Ace AI validation (optional, 30s timeout) ---
-        try:
-            client = _get_client()
-            zone_summary = ", ".join(f'{s["name"]} ({s["type"]}, {s["stop_count"]} stops)' for s in suggestions)
-            ace_question = f"We identified these fleet zones: {zone_summary}. Any risk areas or operational insights for these locations?"
-            ace_result = client.ace_query(ace_question, timeout=30)
-            ace_text = ace_result.get("answer", "") or ace_result.get("text", "")
-            if ace_text:
-                # Distribute Ace insight to each suggestion
-                for s in suggestions:
-                    s["ace_insight"] = ace_text
-        except Exception as e:
-            print(f"[zone-suggest] Ace error: {e}", flush=True)
 
         return jsonify({"suggestions": suggestions, "total_stops": len(stop_points)})
     except Exception as e:
@@ -692,6 +806,14 @@ def api_exceptions():
                         evt["lat"] = t["lat"]
                         evt["lng"] = t["lng"]
                         break
+
+            # Batch GPS fallback via multi_call for exceptions still missing lat/lng
+            missing = [e for e in events if e.get("lat") is None]
+            if missing:
+                try:
+                    _get_client().get_gps_for_exceptions(missing)
+                except Exception as gps_err:
+                    print(f"[exceptions] GPS batch fallback error: {gps_err}", flush=True)
 
             # Also enrich with device name from vehicle cache
             name_map = {}
