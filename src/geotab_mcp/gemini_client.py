@@ -180,6 +180,21 @@ _GEOTAB_TOOLS = [
         },
     ),
     genai_types.FunctionDeclaration(
+        name="delete_zone",
+        description=(
+            "Delete a geofence zone by name. Deletes ALL zones matching the name (case-insensitive). "
+            "Use when the user asks to delete, remove, or clear a geofence or zone. "
+            "Example: 'Delete the Fleet Operations Zone'."
+        ),
+        parameters={
+            "type": "OBJECT",
+            "properties": {
+                "name": {"type": "STRING", "description": "Name of the zone to delete"},
+            },
+            "required": ["name"],
+        },
+    ),
+    genai_types.FunctionDeclaration(
         name="send_text_message",
         description=(
             "Send a text message to a vehicle's in-cab Geotab device. "
@@ -395,6 +410,17 @@ class GeminiChat:
             "action": "zone_created",
         }
 
+    def _delete_zone_helper(self, args: dict) -> dict:
+        """Delete geofence zone(s) by name."""
+        name = args["name"]
+        deleted = self._geotab.delete_zones_by_name(name)
+        return {
+            "status": "deleted" if deleted > 0 else "not_found",
+            "name": name,
+            "count": deleted,
+            "action": "zone_deleted",
+        }
+
     def _truncate(self, data: list | dict) -> list | dict:
         """Truncate large results to fit within Gemini context.
 
@@ -426,7 +452,7 @@ class GeminiChat:
         import hashlib as _hl
 
         # Write operations — no caching, always live
-        _WRITE_OPS = {"create_zone", "send_text_message", "ace_query"}
+        _WRITE_OPS = {"create_zone", "delete_zone", "send_text_message", "ace_query"}
 
         dispatch = {
             "get_vehicles": lambda a: self._geotab.get_vehicles(limit=a.get("limit", 500)),
@@ -461,6 +487,7 @@ class GeminiChat:
             ),
             # ace_query removed — too slow, causes timeouts
             "create_zone": lambda a: self._create_zone_helper(a),
+            "delete_zone": lambda a: self._delete_zone_helper(a),
             "send_text_message": lambda a: self._geotab.send_text_message(
                 device_id=a["device_id"],
                 message=a["message"],

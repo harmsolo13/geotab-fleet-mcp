@@ -399,6 +399,21 @@ class GeotabClient:
             zone_id = self.api.add("Zone", zone)
         return zone_id
 
+    def delete_zone(self, zone_id: str) -> None:
+        """Delete a geofence zone by ID."""
+        with api_tracker.track("geotab", "delete_zone"):
+            self.api.remove("Zone", {"id": zone_id})
+
+    def delete_zones_by_name(self, name: str) -> int:
+        """Delete all zones matching a name. Returns count deleted."""
+        zones = self.get_zones(limit=500)
+        deleted = 0
+        for z in zones:
+            if z["name"] and z["name"].lower() == name.lower():
+                self.delete_zone(z["id"])
+                deleted += 1
+        return deleted
+
     def send_text_message(self, device_id: str, message: str) -> str:
         """Send a text message to an in-cab device."""
         text_message = {
