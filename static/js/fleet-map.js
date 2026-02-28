@@ -157,9 +157,10 @@ async function loadVehicles() {
     }
 }
 
-async function loadZones() {
+async function loadZones(forceRefresh) {
     try {
-        const resp = await fetch("/api/zones");
+        const url = forceRefresh ? "/api/zones?refresh=1" : "/api/zones";
+        const resp = await fetch(url);
         const data = await resp.json();
         if (data.zones) {
             drawZones(data.zones);
@@ -903,11 +904,11 @@ function drawZones(zones) {
     zones.forEach(zone => {
         if (!zone.centroid) return;
 
-        // We only have centroids, draw a circle marker
+        // Draw circle from centroid + estimated radius
         const circle = new google.maps.Circle({
             map: map,
             center: { lat: zone.centroid.y, lng: zone.centroid.x },
-            radius: 300, // approximate
+            radius: zone.radius || 300,
             fillColor: "#f87171",
             fillOpacity: 0.1,
             strokeColor: "#f87171",
@@ -1314,7 +1315,7 @@ async function sendMessage() {
             const lower = data.response.toLowerCase();
             if (lower.includes("zone") && (lower.includes("created") || lower.includes("geofence"))) {
                 showToast("Zone created — refreshing map zones", "success");
-                loadZones();
+                loadZones(true);
             }
             if (lower.includes("message") && lower.includes("sent")) {
                 showToast("Text message sent to vehicle", "success");
@@ -1443,20 +1444,9 @@ function stopVoice() {
 // ── TTS (Text-to-Speech) ──────────────────────────────────────────────
 
 function speakResponse(text) {
-    // During demo — use browser speech for instant playback (no 8s TTS lag)
+    // During demo — skip TTS for tool call responses to avoid overlapping
+    // with the narrator. The response text is already visible in the chat bubble.
     if (typeof demoRunning !== "undefined" && demoRunning) {
-        if (window.speechSynthesis && text.length <= 800) {
-            const clean = text.replace(/\*\*/g, "").replace(/`/g, "").replace(/\n+/g, ". ");
-            speechSynthesis.cancel();
-            const u = new SpeechSynthesisUtterance(clean);
-            u.rate = 1.0; u.pitch = 1; u.volume = 0.9;
-            const voices = speechSynthesis.getVoices();
-            const male = voices.find(v => v.lang.startsWith("en") && (v.name.includes("Male") || v.name.includes("Daniel") || v.name.includes("James")))
-                || voices.find(v => v.lang.startsWith("en") && !v.localService)
-                || voices.find(v => v.lang.startsWith("en"));
-            if (male) u.voice = male;
-            speechSynthesis.speak(u);
-        }
         return;
     }
 

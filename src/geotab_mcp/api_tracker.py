@@ -169,6 +169,17 @@ def get_cached_response(key: str, max_age: int = 0) -> object | None:
         return None
 
 
+def delete_cached_response(key: str) -> None:
+    """Delete a cached response from SQLite by key."""
+    try:
+        conn = _get_db()
+        conn.execute("DELETE FROM api_response_cache WHERE cache_key = ?", (key,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def get_cached_response_like(prefix: str) -> object | None:
     """Retrieve the most recent cached response matching a key prefix.
 

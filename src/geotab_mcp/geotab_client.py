@@ -6,6 +6,8 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
+import math
+
 import httpx
 import mygeotab
 from mygeotab import AuthenticationException, MyGeotabException
@@ -305,6 +307,8 @@ class GeotabClient:
         results = []
         for z in zones:
             points = z.get("points", [])
+            centroid = _centroid(points) if points else None
+            radius = _estimate_radius(points, centroid) if points and centroid else None
             results.append({
                 "id": z.get("id"),
                 "name": z.get("name"),
@@ -313,7 +317,8 @@ class GeotabClient:
                 "zoneTypes": [zt.get("id") if isinstance(zt, dict) else str(zt) for zt in z.get("zoneTypes", [])],
                 "groups": [g.get("id") if isinstance(g, dict) else str(g) for g in z.get("groups", [])],
                 "pointCount": len(points),
-                "centroid": _centroid(points) if points else None,
+                "centroid": centroid,
+                "radius": radius,
             })
         return results
 
@@ -560,3 +565,18 @@ def _centroid(points: list[dict]) -> dict:
     avg_x = sum(p.get("x", 0) for p in points) / len(points)
     avg_y = sum(p.get("y", 0) for p in points) / len(points)
     return {"x": round(avg_x, 6), "y": round(avg_y, 6)}
+
+
+def _estimate_radius(points: list[dict], centroid: dict) -> float:
+    """Estimate zone radius in metres from max point distance to centroid."""
+    if not points or not centroid:
+        return 300.0
+    cx, cy = centroid["x"], centroid["y"]
+    max_dist = 0.0
+    for p in points:
+        dx = (p.get("x", 0) - cx) * math.cos(math.radians(cy)) * 111320
+        dy = (p.get("y", 0) - cy) * 111320
+        dist = math.sqrt(dx * dx + dy * dy)
+        if dist > max_dist:
+            max_dist = dist
+    return round(max_dist, 1) if max_dist > 0 else 300.0
