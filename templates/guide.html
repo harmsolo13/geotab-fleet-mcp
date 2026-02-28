@@ -305,6 +305,8 @@
             <a href="#detail">Vehicle Detail</a>
             <a href="#replay">Trip Replay</a>
             <a href="#report">Fleet Report</a>
+            <a href="#zones">Zones &amp; Alerts</a>
+            <a href="#events">Events Panel</a>
             <a href="#chat">Chat Assistant</a>
             <a href="#theme">Theme</a>
             <a href="#tips">Tips &amp; Shortcuts</a>
@@ -481,9 +483,84 @@
                 </table>
             </section>
 
-            <!-- 8. Chat Assistant -->
+            <!-- 8. Zones & Alerts -->
+            <section id="zones">
+                <h2>8. Zones &amp; Alerts</h2>
+                <p>The sidebar Zone Intelligence section provides AI-powered geofence management and real-time entry/exit monitoring.</p>
+
+                <h3>Zone List</h3>
+                <p>All Geotab zones are displayed in the sidebar with colour-coded type badges. Click any zone to pan the map to its location. Zones are classified automatically:</p>
+                <table class="field-table">
+                    <tr><th>Type</th><th>Colour</th><th>Detection Keywords</th></tr>
+                    <tr><td>Depot</td><td><span style="color:#60a5fa">Blue</span></td><td>depot, warehouse, hub, yard, base, HQ</td></tr>
+                    <tr><td>Risk</td><td><span style="color:#f87171">Red</span></td><td>speed, risk, violation, danger, hazard</td></tr>
+                    <tr><td>Delivery</td><td><span style="color:#34d399">Green</span></td><td>deliver, customer, drop, pickup, store</td></tr>
+                    <tr><td>Service</td><td><span style="color:#fbbf24">Yellow</span></td><td>service, maintenance, repair, fuel, charge</td></tr>
+                    <tr><td>Custom</td><td><span style="color:#a78bfa">Purple</span></td><td>Everything else</td></tr>
+                </table>
+
+                <h3>Zone Intelligence &mdash; AI Suggestions</h3>
+                <p>Click <strong>Suggest Zones</strong> to trigger an AI analysis of trip stop-point clusters:</p>
+                <ol>
+                    <li>The system fetches recent trip data and identifies spatial clusters (~500m grid cells)</li>
+                    <li>Gemini AI generates intelligent zone names, types, radii, and one-line reasoning for each cluster</li>
+                    <li>Geotab Ace AI validates suggestions with fleet intelligence (purple badge with tooltip)</li>
+                    <li>Preview circles appear on the map &mdash; click <strong>Create</strong> to add any suggestion as a real Geotab zone</li>
+                </ol>
+                <div class="callout callout-tip"><strong>Tip:</strong> Risk zone suggestions include exception event counts and risk types (e.g. speeding, harsh braking) from correlated GPS data.</div>
+
+                <h3>Zone Alerts &mdash; Entry/Exit Monitoring</h3>
+                <p>Each zone in the sidebar has a bell icon toggle for entry/exit alerts:</p>
+                <ul>
+                    <li><strong>Bell lit</strong> &mdash; alerts enabled; the system monitors vehicles every 10 seconds</li>
+                    <li><strong>Bell dim</strong> &mdash; alerts disabled</li>
+                </ul>
+                <p>When a vehicle crosses a monitored zone boundary, a toast notification fires:</p>
+                <ul>
+                    <li><span style="color:#fbbf24">Amber warning</span> for risk zones</li>
+                    <li><span style="color:#4a9eff">Blue info</span> for all other zones</li>
+                </ul>
+                <p>Risk zones automatically enable alerts when created. All alert configurations persist in the database across restarts. The monitoring is fully client-side &mdash; no additional Geotab API calls.</p>
+
+                <h3>Deleting Zones</h3>
+                <p>Click the <strong>&times;</strong> button on any zone to delete it from Geotab. Alert configurations are cleaned up automatically.</p>
+            </section>
+
+            <!-- 9. Events Panel -->
+            <section id="events">
+                <h2>9. Events Panel</h2>
+                <p>The Events panel provides a detailed timeline of trips and safety events for a single vehicle, displayed in the resizable slide-out panel.</p>
+
+                <h3>Opening the Events Panel</h3>
+                <p>There are two ways to view vehicle events:</p>
+                <ul>
+                    <li><strong>Quick View</strong> &mdash; in the vehicle detail panel, click <strong>Quick View</strong> under Safety Events to see the last 10 exception events inline</li>
+                    <li><strong>Full Timeline</strong> &mdash; click <strong>Full Timeline &rarr;</strong> (or the timeline icon in the vehicle list) to open the Events tab in the slide-out panel</li>
+                </ul>
+
+                <h3>Timeline Contents</h3>
+                <p>The full timeline shows trips and exceptions merged chronologically (newest first):</p>
+                <ul>
+                    <li><strong>Trip cards</strong> &mdash; start/end time, distance, max speed, average speed, and inline stop detection from GPS breadcrumb analysis</li>
+                    <li><strong>Exception events</strong> &mdash; colour-coded by severity (red for collisions, amber for driving violations, yellow for compliance). Correlated to trips by timestamp overlap</li>
+                    <li><strong>Stop pins</strong> &mdash; detected stops are plotted on the map with colour-coded markers. Click any stop to replay that trip segment</li>
+                </ul>
+
+                <h3>Event Severity</h3>
+                <table class="field-table">
+                    <tr><th>Severity</th><th>Colour</th><th>Event Types</th></tr>
+                    <tr><td>Critical</td><td><span style="color:#f87171">Red</span></td><td>Major/Minor/Possible Collision</td></tr>
+                    <tr><td>Driving</td><td><span style="color:#f59e0b">Amber</span></td><td>Speeding, Max Speed, Harsh Braking, Hard Acceleration, Harsh Cornering</td></tr>
+                    <tr><td>Compliance</td><td><span style="color:#fbbf24">Yellow</span></td><td>Seat Belt, Engine Light On, Engine Fault</td></tr>
+                </table>
+
+                <h3>Pop-out</h3>
+                <p>Click the pop-out button to open the events timeline in a standalone browser tab, including the stop-point map pins.</p>
+            </section>
+
+            <!-- 10. Chat Assistant -->
             <section id="chat">
-                <h2>8. Chat Assistant</h2>
+                <h2>10. Chat Assistant</h2>
                 <p>The AI chat panel (bottom-right of the map) is powered by Google Gemini with access to your live fleet data via function calling.</p>
 
                 <h3>Opening the Chat</h3>
@@ -523,9 +600,9 @@
                 <p>Click the <strong>Clear</strong> button in the chat header to reset the conversation history.</p>
             </section>
 
-            <!-- 9. Theme -->
+            <!-- 11. Theme -->
             <section id="theme">
-                <h2>9. Theme</h2>
+                <h2>11. Theme</h2>
                 <p>Fleet Command Center supports both dark and light themes.</p>
                 <ul>
                     <li><strong>Dashboard:</strong> Click the sun/moon icon in the top-right corner of the sidebar header</li>
@@ -534,9 +611,9 @@
                 <p>Your theme preference is saved in your browser's local storage and persists across sessions. The guide page reads the same preference, so switching theme in the dashboard also applies here.</p>
             </section>
 
-            <!-- 10. Tips & Shortcuts -->
+            <!-- 12. Tips & Shortcuts -->
             <section id="tips">
-                <h2>10. Tips &amp; Shortcuts</h2>
+                <h2>12. Tips &amp; Shortcuts</h2>
                 <table class="field-table">
                     <tr><th>Shortcut / Feature</th><th>Description</th></tr>
                     <tr><td><kbd>Enter</kbd></td><td>Send message in chat</td></tr>
