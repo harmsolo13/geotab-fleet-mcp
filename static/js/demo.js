@@ -608,13 +608,13 @@ function buildDemoSteps() {
             if (speedSelect) { speedSelect.value = "5"; setReplaySpeed("5"); }
             playReplay();
         },
-        1000
+        500
     );
 
     // Pause + Events Panel (merged step)
     demoStep(
         "Events Panel — vehicle activity timeline",
-        "You can pause, scrub, and change playback speed. For a deeper dive, the Events panel shows a full timeline for each vehicle — Safety events like speeding, harsh braking, and collisions are color-coded and nested within their trips. And here we toggle Solo Mode off.",
+        "For a deeper dive, the Events panel shows a full timeline for each vehicle — Safety events like speeding, harsh braking, and collisions are color-coded and nested within their trips. And here we toggle Solo Mode off.",
         () => {
             pauseReplay();
             const v = getMovingVehicle() || getAnyVehicle();
