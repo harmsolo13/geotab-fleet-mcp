@@ -995,6 +995,9 @@ function updateZoneList(zones) {
             <button class="zone-delete-btn" onclick="event.stopPropagation(); deleteZone('${escapeHTML(z.name)}')" title="Delete zone">&times;</button>
         </div>`;
     }).join("");
+
+    // Update zone badge
+    updateBadge("badgeZones", zones.length + " zone" + (zones.length > 1 ? "s" : ""), "neutral");
 }
 
 function panToZone(idx) {
@@ -1096,6 +1099,7 @@ async function suggestZones() {
 
         // Store suggestions for creation
         window._zoneSuggestions = suggestions;
+        updateBadge("badgeZones", suggestions.length + " new", "info");
         showToast(`${suggestions.length} zone suggestions from ${data.total_stops} trip stops`, "success");
     } catch (err) {
         showToast("Suggestion failed: " + err.message, "error");
@@ -1342,6 +1346,25 @@ async function loadVehicleEvents(deviceId) {
 }
 
 
+// ── Sidebar Collapse + Badges ───────────────────────────────────────────
+
+function toggleSection(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle("collapsed");
+}
+
+function updateBadge(id, text, style) {
+    const badge = document.getElementById(id);
+    if (!badge) return;
+    if (!text) {
+        badge.className = "section-badge";
+        badge.textContent = "";
+        return;
+    }
+    badge.textContent = text;
+    badge.className = "section-badge active " + (style || "neutral");
+}
+
 // ── Sidebar Updates ─────────────────────────────────────────────────────
 
 function updateVehicleList() {
@@ -1396,6 +1419,15 @@ function updateVehicleList() {
             </div>
         `;
     }).join("");
+
+    // Update vehicle badge
+    const faultCount = vehicles.filter(v => getVehicleStatus(v) === "fault").length;
+    if (faultCount > 0) {
+        updateBadge("badgeVehicles", faultCount + " fault" + (faultCount > 1 ? "s" : ""), "warning");
+    } else {
+        const movingCount = vehicles.filter(v => getVehicleStatus(v) === "moving").length;
+        updateBadge("badgeVehicles", movingCount > 0 ? movingCount + " moving" : "", "info");
+    }
 }
 
 function updateFaultList() {
@@ -1411,6 +1443,9 @@ function updateFaultList() {
             <div class="fault-desc">${escapeHTML(f.diagnosticName || f.diagnosticId || "Unknown")} &mdash; ${escapeHTML(f.failureMode || "")}</div>
         </div>
     `).join("");
+
+    // Update fault badge
+    updateBadge("badgeFaults", faults.length > 0 ? faults.length : "", "warning");
 }
 
 function updateStats() {

@@ -212,7 +212,34 @@ body {
     letter-spacing: 1px;
     color: var(--text-secondary);
     margin-bottom: 10px;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
+.section-title:hover { color: var(--text-primary); }
+
+.section-chevron {
+    font-size: 10px;
+    margin-left: auto;
+    transition: transform 0.2s;
+    color: var(--text-muted);
+}
+.section.collapsed .section-chevron { transform: rotate(-90deg); }
+.section.collapsed .section-body { display: none; }
+
+.section-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 10px;
+    display: none;
+}
+.section-badge.active { display: inline-block; }
+.section-badge.info { background: rgba(74, 158, 255, 0.15); color: var(--accent-blue); }
+.section-badge.warning { background: rgba(248, 113, 113, 0.15); color: var(--accent-red); }
+.section-badge.neutral { background: rgba(255, 255, 255, 0.08); color: var(--text-secondary); }
 
 .search-input {
     width: 100%;
@@ -523,6 +550,10 @@ body {
 
 [data-theme="light"] .zone-btn {
     background: rgba(139, 92, 246, 0.08);
+}
+
+[data-theme="light"] .section-badge.neutral {
+    background: rgba(0, 0, 0, 0.06);
 }
 
 /* ── Detail Panel ────────────────────────────────────────────────────── */
