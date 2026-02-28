@@ -449,12 +449,18 @@ async function generateReport() {
     body.innerHTML = '<div class="report-loading"><div class="report-spinner"></div><p>Generating executive report...<br><small>Querying Ace AI + Gemini (may take 30-60s)</small></p></div>';
     btn.classList.add("loading");
 
+    const minSpinner = 2500; // Show spinner for at least 2.5s so it doesn't look instant
+    const spinnerStart = Date.now();
+
     try {
         const resp = await fetch("/api/report", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
         });
         const data = await resp.json();
+        // Wait remaining time so spinner shows for at least minSpinner ms
+        const elapsed = Date.now() - spinnerStart;
+        if (elapsed < minSpinner) await new Promise(r => setTimeout(r, minSpinner - elapsed));
         btn.classList.remove("loading");
 
         if (data.error) {
