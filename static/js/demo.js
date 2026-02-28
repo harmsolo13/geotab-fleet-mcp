@@ -499,7 +499,7 @@ function buildDemoSteps() {
     // Opening + Fleet Overview (merged)
     demoStep(
         "Fleet Command Center — Live Dashboard",
-        "This is the Geotab Fleet Command Center, built on the Geotab SDK with Google Maps and Gemini AI, shows a live Geotab fleet — and renders every vehicle on the map in real time.",
+        "This is the Geotab Fleet Command Center, built on the Geotab SDK with Google Maps and Gemini AI, it shows a live Geotab fleet — and renders every vehicle on the map in real time.",
         () => fitAllVehicles(),
         0
     );
