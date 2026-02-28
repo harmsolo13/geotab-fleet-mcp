@@ -183,9 +183,10 @@ _warm_cache_from_db()
 
 
 def _cache_force(key: str) -> bool:
-    """Check if request has ?refresh=1 to bypass cache."""
+    """Check if request has ?refresh=1 to bypass both memory and DB cache."""
     if request.args.get("refresh") == "1":
         _cache_store.pop(key, None)
+        api_tracker.delete_cached_response(key)
         return True
     return False
 

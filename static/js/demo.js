@@ -96,6 +96,10 @@ function _collectDemoLines(extraLines) {
                 const clean = step.narration.replace(/\*\*/g, "").replace(/`/g, "").replace(/\n+/g, ". ");
                 lines.push({ text: clean, voice: "narrator" });
             }
+            if (step.resultNarration) {
+                const clean = step.resultNarration.replace(/\*\*/g, "").replace(/`/g, "").replace(/\n+/g, ". ");
+                lines.push({ text: clean, voice: "narrator" });
+            }
         }
     }
     return lines;
@@ -241,6 +245,33 @@ function demoSpeakBrowser(text, onEnd) {
     speechSynthesis.speak(utterance);
 }
 
+// ── Voice-Triggered Chat Query ────────────────────────────────────────
+
+function demoVoiceQuery(text, callback) {
+    const micBtn = document.getElementById("micBtn");
+    const input = document.getElementById("chatInput");
+    if (!input) { if (callback) callback(); return; }
+
+    // Add red pulse to mic button
+    if (micBtn) micBtn.classList.add("recording");
+
+    // Typewriter text into input at ~40ms/char
+    let i = 0;
+    input.value = "";
+    const typeTimer = setInterval(() => {
+        if (!demoRunning) { clearInterval(typeTimer); return; }
+        if (i < text.length) {
+            input.value += text[i];
+            i++;
+        } else {
+            clearInterval(typeTimer);
+            // Remove pulse, then send
+            if (micBtn) micBtn.classList.remove("recording");
+            if (callback) callback();
+        }
+    }, 40);
+}
+
 // ── Demo Step Runner ──────────────────────────────────────────────────
 
 const DEMO_STEPS = [];
@@ -281,10 +312,24 @@ function runNextDemoStep() {
     if (step.waitFor) {
         const started = Date.now();
         const maxWait = step.waitTimeout || 45000;
+        const advanceAfterWait = () => {
+            if (!demoRunning) return;
+            // If resultNarration is set, narrator speaks a summary of the AI response
+            if (step.resultNarration) {
+                showDemoLabel("AI responded");
+                demoSpeak(step.resultNarration, () => {
+                    if (!demoRunning) return;
+                    const t = setTimeout(runNextDemoStep, step.pauseAfter);
+                    demoTimeouts.push(t);
+                });
+                return;
+            }
+            runNextDemoStep();
+        };
         const pollWait = () => {
             if (!demoRunning) return;
             if (step.waitFor() || Date.now() - started > maxWait) {
-                runNextDemoStep();
+                advanceAfterWait();
             } else {
                 const t = setTimeout(pollWait, 1000);
                 demoTimeouts.push(t);
@@ -342,7 +387,7 @@ function buildDemoSteps() {
     // Opening
     demoStep(
         "Fleet Command Center — Live Dashboard",
-        "Thank you. This is GeotabVibe — a Fleet Command Center built on the Geotab SDK with Google Maps and Gemini AI. As you just saw, we can control everything by voice. Let's take a tour.",
+        "Thank you. This is GeotabVibe — a Fleet Command Center built on the Geotab SDK with Google Maps and Gemini AI. It also includes an MCP server, allowing any AI assistant to connect and manage the fleet through natural language. As you just saw, we can control everything by voice. Let's take a tour.",
         null,
         0
     );
@@ -350,7 +395,7 @@ function buildDemoSteps() {
     // Fleet Overview
     demoStep(
         "Fleet overview — all vehicles on map",
-        "The dashboard connects to a live Geotab fleet and renders every vehicle on the map in real time. On the left, you can see fleet stats — total vehicles, how many are moving, stopped, and active faults.",
+        "The dashboard connects to a live Geotab fleet — and renders every vehicle on the map in real time. On the left, you can see fleet stats — total vehicles, how many are moving, stopped, and active faults.",
         () => fitAllVehicles(),
         0
     );
@@ -382,6 +427,14 @@ function buildDemoSteps() {
         0
     );
 
+    // Solo Mode ON — before replay
+    demoStep(
+        "Solo Mode — focused tracking",
+        "We're entering Solo Mode to focus on this single vehicle during replay. Solo Mode hides all other fleet markers, but we can toggle it off at any time to see the full fleet.",
+        () => { if (!soloMode) toggleSoloMode(); },
+        0
+    );
+
     // Trip Replay
     demoStep(
         "Trip Replay — animated GPS trail",
@@ -409,11 +462,17 @@ function buildDemoSteps() {
         1500
     );
 
-    // Speed Coloring
+    // Speed Coloring + Solo Mode OFF
     demoStep(
         "Speed-colored path visualization",
         "You can pause, scrub, and change playback speed. The marker and path segments update color instantly based on the vehicle's speed at each GPS point.",
         () => pauseReplay(),
+        0
+    );
+    demoStep(
+        "Solo Mode off — full fleet restored",
+        "And here we toggle Solo Mode off, bringing all fleet vehicles back into view.",
+        () => { if (soloMode) toggleSoloMode(); },
         0
     );
 
@@ -548,14 +607,19 @@ function buildDemoSteps() {
         0
     );
 
-    // Fleet Assistant — close slide out, open chat
+    // Transition line before chat section
+    demoStep(
+        null,
+        "Ok, let's try it and take a look at the responses.",
+        () => closeSlideout(),
+        0
+    );
+
+    // Fleet Assistant — open chat
     demoStep(
         "Fleet Assistant — AI chat with Gemini",
         "The Fleet Assistant is a conversational AI powered by Gemini with function calling. It has access to 12 Geotab API tools — vehicles, trips, faults, drivers, zones, fuel transactions, exceptions, and Ace AI.",
-        () => {
-            closeSlideout();
-            if (!chatOpen) toggleChat();
-        },
+        () => { if (!chatOpen) toggleChat(); },
         0
     );
 
@@ -565,19 +629,14 @@ function buildDemoSteps() {
         "Asking: Which vehicles are moving?",
         "Asking 'which vehicles are moving right now' triggers a function call to the Geotab API. Gemini retrieves the data and responds conversationally with specific vehicle names and speeds.",
         () => {
-            // Reset chatSending guard in case a prior call is stuck
             chatSending = false;
             window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
-            const input = document.getElementById("chatInput");
-            if (input) {
-                input.value = "Which vehicles are moving right now?";
-                sendMessage();
-            }
+            demoVoiceQuery("Which vehicles are moving right now?", () => sendMessage());
         },
         0
     );
 
-    // Wait for a new ASSISTANT message + AI voice to finish
+    // Wait for a new ASSISTANT message, then narrator summarises the response
     DEMO_STEPS.push({
         label: "Waiting for AI response...",
         narration: null,
@@ -585,10 +644,9 @@ function buildDemoSteps() {
         pauseAfter: 500,
         waitFor: () => {
             const assistantBubbles = document.querySelectorAll("#chatMessages .chat-bubble.assistant");
-            const hasNewResponse = assistantBubbles.length > (window._demoAssistantCount || 0);
-            const audioFinished = !demoAudio && !(window.speechSynthesis && speechSynthesis.speaking);
-            return hasNewResponse && audioFinished;
+            return assistantBubbles.length > (window._demoAssistantCount || 0);
         },
+        resultNarration: "The assistant retrieved live fleet data and responded with the vehicles currently in motion, including their names and speeds in kilometres per hour.",
         waitTimeout: 90000
     });
 
@@ -599,11 +657,7 @@ function buildDemoSteps() {
         () => {
             chatSending = false;
             window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
-            const input = document.getElementById("chatInput");
-            if (input) {
-                input.value = "Any speeding violations this week?";
-                sendMessage();
-            }
+            demoVoiceQuery("Any speeding violations this week?", () => sendMessage());
         },
         0
     );
@@ -616,10 +670,9 @@ function buildDemoSteps() {
         pauseAfter: 500,
         waitFor: () => {
             const assistantBubbles = document.querySelectorAll("#chatMessages .chat-bubble.assistant");
-            const hasNewResponse = assistantBubbles.length > (window._demoAssistantCount || 0);
-            const audioFinished = !demoAudio && !(window.speechSynthesis && speechSynthesis.speaking);
-            return hasNewResponse && audioFinished;
+            return assistantBubbles.length > (window._demoAssistantCount || 0);
         },
+        resultNarration: "The assistant queried exception events and returned the speeding violations found this week, including the rule names and vehicle details.",
         waitTimeout: 90000
     });
 
@@ -630,11 +683,7 @@ function buildDemoSteps() {
         () => {
             chatSending = false;
             window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
-            const input = document.getElementById("chatInput");
-            if (input) {
-                input.value = "Send a message to Demo - 01 saying please return to depot";
-                sendMessage();
-            }
+            demoVoiceQuery("Send a message to Demo - 01 saying please return to depot", () => sendMessage());
         },
         0
     );
@@ -647,30 +696,25 @@ function buildDemoSteps() {
         pauseAfter: 500,
         waitFor: () => {
             const assistantBubbles = document.querySelectorAll("#chatMessages .chat-bubble.assistant");
-            const hasNewResponse = assistantBubbles.length > (window._demoAssistantCount || 0);
-            const audioFinished = !demoAudio && !(window.speechSynthesis && speechSynthesis.speaking);
-            return hasNewResponse && audioFinished;
+            return assistantBubbles.length > (window._demoAssistantCount || 0);
         },
+        resultNarration: "Message sent successfully. The text was delivered directly to the vehicle's in-cab Geotab device via the API.",
         waitTimeout: 90000
     });
 
-    // Geofence creation — action command
+    // Geofence creation — action command (coords near fleet depot, 2km radius for visibility)
     demoStep(
         "Action: Create a geofence zone",
         "Finally, asking it to create a geofence triggers a zone creation function call. The zone appears on the map immediately.",
         () => {
             chatSending = false;
             window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
-            const input = document.getElementById("chatInput");
-            if (input) {
-                input.value = "Create a geofence called Demo Zone at 43.65, -79.38";
-                sendMessage();
-            }
+            demoVoiceQuery("Create a geofence called Fleet Operations Zone at 43.52, -79.69 with a 2km radius", () => sendMessage());
         },
         0
     );
 
-    // Wait for geofence response + AI voice to finish
+    // Wait for geofence response
     DEMO_STEPS.push({
         label: "Waiting for AI response...",
         narration: null,
@@ -678,33 +722,17 @@ function buildDemoSteps() {
         pauseAfter: 500,
         waitFor: () => {
             const assistantBubbles = document.querySelectorAll("#chatMessages .chat-bubble.assistant");
-            const hasNewResponse = assistantBubbles.length > (window._demoAssistantCount || 0);
-            const audioFinished = !demoAudio && !(window.speechSynthesis && speechSynthesis.speaking);
-            return hasNewResponse && audioFinished;
+            return assistantBubbles.length > (window._demoAssistantCount || 0);
         },
+        resultNarration: "The geofence was created and is now visible on the map as a large red zone boundary covering the fleet's operating area. This was a live API call to the Geotab platform.",
         waitTimeout: 90000
     });
-
-    // Solo Mode
-    demoStep(
-        "Solo Mode — isolate a single vehicle",
-        "Solo mode isolates a single vehicle — hiding all other markers from the map. Useful for focused tracking during operations or incident review.",
-        () => {
-            const v = getMovingVehicle() || getAnyVehicle();
-            if (v) {
-                selectVehicle(v.id);
-                setTimeout(() => toggleSoloMode(), 500);
-            }
-        },
-        0
-    );
 
     // Theme Toggle
     demoStep(
         "Theme Toggle — light and dark modes",
         "The dashboard supports light and dark themes. The map styles, sidebar, panels, and all components adapt seamlessly.",
         () => {
-            if (soloMode) toggleSoloMode();
             closeDetail();
             toggleTheme();
         },
