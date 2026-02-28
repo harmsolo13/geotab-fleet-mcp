@@ -499,7 +499,7 @@ function buildDemoSteps() {
     // Opening + Fleet Overview (merged)
     demoStep(
         "Fleet Command Center — Live Dashboard",
-        "This is the Geotab Fleet Command Center, built on the Geotab SDK with Google Maps and Gemini AI — it shows a live Geotab fleet — and renders every vehicle on the map in real time.",
+        "This is the Geotab Fleet Command Center, built on the Geotab SDK with Google Maps and Gemini AI, shows a live Geotab fleet — and renders every vehicle on the map in real time.",
         () => fitAllVehicles(),
         0
     );
@@ -593,7 +593,7 @@ function buildDemoSteps() {
     // Fleet Stats + KPIs
     demoStep(
         "Fleet stats and KPIs",
-"Now looking around the dashboard, on the left, you can see fleet stats — total vehicles, how many are moving, stopped and any active faults are listed with diagnostic codes. Below that, fleet KPIs are aggregated from trip data. These update every 60 seconds.",
+"Now looking around the dashboard, on the left, you have the light and dark mode toggle, and then you can see fleet stats. Below that, fleet KPIs are aggregated from trip data. These update every 60 seconds. There is also a heatmap toggle for additional insights.",
         null,
         0
     );
@@ -694,24 +694,13 @@ function buildDemoSteps() {
         400
     );
 
-    // Activity Heatmap
-    demoStep(
-        "Activity Heatmap — fleet density",
-        "The activity heatmap visualizes fleet density using vehicle positions across the fleet's operating area.",
-        () => {
-            closeReplay();
-            closeDetail();
-            toggleHeatmap();
-        },
-        0
-    );
-
     // Fleet Report
     demoStep(
         "Fleet Report — AI-powered analysis",
         "Now let's generate the fleet report. This queries Geotab's Ace AI for fleet insights, then passes the data to Gemini 3 to generate a styled executive report.",
         () => {
-            if (heatmapVisible) toggleHeatmap();
+            closeReplay();
+            closeDetail();
             openSlideout("report");
         },
         500
@@ -851,25 +840,6 @@ function buildDemoSteps() {
             }
         },
         0
-    );
-
-    // Theme Toggle
-    demoStep(
-        "Theme Toggle — light and dark modes",
-        "The dashboard supports light and dark themes, all components adapt seamlessly.",
-        () => {
-            closeDetail();
-            toggleTheme();
-        },
-        1000
-    );
-
-    // Toggle back
-    demoStep(
-        null,
-        null,
-        () => toggleTheme(),
-        400
     );
 
     // Final
