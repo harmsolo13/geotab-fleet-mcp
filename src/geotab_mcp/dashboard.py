@@ -384,8 +384,7 @@ def api_zones_suggest():
             vehicles = client.get_vehicles(limit=500)
             _cache_set("vehicles", vehicles, "vehicles")
 
-        # Collect stop points from cached trip data only (no live API calls)
-        # This keeps the endpoint fast and non-blocking for the Flask thread.
+        # Collect location data from cached trips + vehicle positions (no live API calls)
         stop_points = []
         uncached = 0
         for v in vehicles:
@@ -393,11 +392,20 @@ def api_zones_suggest():
             trip_data = _cache_get(cache_key)
             if trip_data is None:
                 uncached += 1
-                continue  # skip — don't block on Geotab API calls
+                continue
             for trip in (trip_data.get("trips") or []):
                 sp = trip.get("stopPoint")
                 if sp and sp.get("x") is not None and sp.get("y") is not None:
                     stop_points.append((sp["y"], sp["x"]))  # lat, lng
+
+        # Include last-known vehicle locations from cache
+        loc_map = _cache_get("locations")
+        if isinstance(loc_map, dict):
+            for loc in loc_map.values():
+                lat = loc.get("latitude")
+                lng = loc.get("longitude")
+                if lat and lng:
+                    stop_points.append((lat, lng))
 
         if not stop_points and uncached > 0:
             # No cached data yet — trigger background trip loading for first 20 vehicles
@@ -424,10 +432,10 @@ def api_zones_suggest():
             cell_key = (round(lat * 200) / 200, round(lng * 200) / 200)
             cells.setdefault(cell_key, []).append((lat, lng))
 
-        # Filter cells with 3+ stops, rank by frequency
+        # Filter cells with 2+ stops, rank by frequency
         candidates = []
         for (clat, clng), pts in cells.items():
-            if len(pts) >= 3:
+            if len(pts) >= 2:
                 avg_lat = sum(p[0] for p in pts) / len(pts)
                 avg_lng = sum(p[1] for p in pts) / len(pts)
                 candidates.append({
@@ -471,13 +479,19 @@ def api_zones_suggest():
                     contents=prompt,
                     config=genai.types.GenerateContentConfig(
                         temperature=0.3,
-                        max_output_tokens=2048,
+                        max_output_tokens=4096,
                     ),
                 )
                 analysis_text = response.text or ""
-                # Strip markdown fences if present
-                analysis_text = re.sub(r"^```(?:json)?\s*", "", analysis_text.strip())
-                analysis_text = re.sub(r"\s*```$", "", analysis_text.strip())
+                # Extract JSON array from response (strip markdown, prose, etc.)
+                analysis_text = analysis_text.strip()
+                analysis_text = re.sub(r"^```(?:json)?\s*", "", analysis_text)
+                analysis_text = re.sub(r"\s*```\s*$", "", analysis_text)
+                # Find the JSON array in the response
+                bracket_start = analysis_text.find("[")
+                bracket_end = analysis_text.rfind("]")
+                if bracket_start >= 0 and bracket_end > bracket_start:
+                    analysis_text = analysis_text[bracket_start:bracket_end + 1]
                 gemini_data = json.loads(analysis_text)
                 if isinstance(gemini_data, list) and len(gemini_data) == len(suggestions):
                     for i, s in enumerate(suggestions):
@@ -488,7 +502,7 @@ def api_zones_suggest():
                         s["reasoning"] = g.get("reasoning", "")
                     gemini_ok = True
         except Exception as e:
-            print(f"[zone-suggest] Gemini error: {e}", flush=True)
+            print(f"[zone-suggest] Gemini error: {e} | raw: {(analysis_text or '')[:200]}", flush=True)
 
         if not gemini_ok:
             # Mechanical fallback
