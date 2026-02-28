@@ -10,6 +10,9 @@ let demoTimeouts = [];
 let demoOverlayEl = null;
 let demoStepIndex = 0;
 let demoChatShifted = false;
+let demoTimerEl = null;
+let demoTimerInterval = null;
+let demoStartTime = 0;
 
 // ── Chat Position Helper ──────────────────────────────────────────────
 
@@ -75,6 +78,43 @@ function removeDemoOverlay() {
     if (demoOverlayEl) {
         demoOverlayEl.remove();
         demoOverlayEl = null;
+    }
+}
+
+// ── Demo Timer ───────────────────────────────────────────────────────
+
+function startDemoTimer() {
+    if (demoTimerEl) return;
+    demoStartTime = Date.now();
+    demoTimerEl = document.createElement("div");
+    demoTimerEl.id = "demoTimer";
+    demoTimerEl.style.cssText = `
+        position: fixed; bottom: 12px; right: 12px; z-index: 101;
+        padding: 6px 14px; border-radius: 8px;
+        background: rgba(10, 14, 26, 0.85); backdrop-filter: blur(8px);
+        border: 1px solid rgba(74, 158, 255, 0.3);
+        color: #4a9eff; font-family: 'JetBrains Mono', 'Fira Code', monospace;
+        font-size: 14px; font-weight: 600; pointer-events: none;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+    `;
+    demoTimerEl.textContent = "0:00";
+    document.body.appendChild(demoTimerEl);
+    demoTimerInterval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - demoStartTime) / 1000);
+        const m = Math.floor(elapsed / 60);
+        const s = elapsed % 60;
+        demoTimerEl.textContent = m + ":" + String(s).padStart(2, "0");
+        // Warn if approaching 3 min limit
+        if (elapsed >= 170) demoTimerEl.style.color = "#f87171";
+        else if (elapsed >= 150) demoTimerEl.style.color = "#fbbf24";
+    }, 1000);
+}
+
+function stopDemoTimer() {
+    if (demoTimerInterval) { clearInterval(demoTimerInterval); demoTimerInterval = null; }
+    if (demoTimerEl) {
+        // Flash final time for 5 seconds then remove
+        setTimeout(() => { if (demoTimerEl) { demoTimerEl.remove(); demoTimerEl = null; } }, 5000);
     }
 }
 
@@ -440,6 +480,7 @@ function stopDemo() {
     demoTimeouts.forEach(clearTimeout);
     demoTimeouts = [];
     demoStopScrollChat();
+    stopDemoTimer();
     // Stop Piper audio if playing
     if (demoAudio) { demoAudio.pause(); demoAudio = null; }
     hideDemoLabel();
@@ -843,6 +884,7 @@ function runDemo() {
     demoStepIndex = 0;
     demoTimeouts = [];
     createDemoOverlay();
+    startDemoTimer();
 
     // Build steps if not already built by pre-cache
     if (!DEMO_STEPS.length) buildDemoSteps();
