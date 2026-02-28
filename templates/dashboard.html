@@ -71,30 +71,45 @@
         </div>
 
         <!-- Vehicle List -->
-        <div class="section">
-            <h2 class="section-title">Vehicles</h2>
-            <input type="text" id="vehicleSearch" class="search-input" placeholder="Search vehicles...">
-            <div id="vehicleList" class="vehicle-list">
-                <div class="loading">Loading fleet data...</div>
+        <div class="section" id="sectionVehicles">
+            <h2 class="section-title" onclick="toggleSection('sectionVehicles')">
+                Vehicles <span class="section-badge" id="badgeVehicles"></span>
+                <span class="section-chevron">&#9660;</span>
+            </h2>
+            <div class="section-body">
+                <input type="text" id="vehicleSearch" class="search-input" placeholder="Search vehicles...">
+                <div id="vehicleList" class="vehicle-list">
+                    <div class="loading">Loading fleet data...</div>
+                </div>
             </div>
         </div>
 
         <!-- Faults Section -->
-        <div class="section">
-            <h2 class="section-title">Active Faults</h2>
-            <div id="faultList" class="fault-list">
-                <div class="loading">Loading faults...</div>
+        <div class="section" id="sectionFaults">
+            <h2 class="section-title" onclick="toggleSection('sectionFaults')">
+                Active Faults <span class="section-badge" id="badgeFaults"></span>
+                <span class="section-chevron">&#9660;</span>
+            </h2>
+            <div class="section-body">
+                <div id="faultList" class="fault-list">
+                    <div class="loading">Loading faults...</div>
+                </div>
             </div>
         </div>
 
         <!-- Zone Intelligence -->
-        <div class="section zone-section">
-            <h2 class="section-title">Zone Intelligence</h2>
-            <div class="zone-actions">
-                <button id="suggestZonesBtn" class="zone-btn" onclick="suggestZones()" title="AI Suggest Zones">Suggest Zones</button>
-            </div>
-            <div id="zoneList" class="zone-list">
-                <div class="zone-empty">No zones loaded</div>
+        <div class="section zone-section" id="sectionZones">
+            <h2 class="section-title" onclick="toggleSection('sectionZones')">
+                Zone Intelligence <span class="section-badge" id="badgeZones"></span>
+                <span class="section-chevron">&#9660;</span>
+            </h2>
+            <div class="section-body">
+                <div class="zone-actions">
+                    <button id="suggestZonesBtn" class="zone-btn" onclick="suggestZones()" title="AI Suggest Zones">Suggest Zones</button>
+                </div>
+                <div id="zoneList" class="zone-list">
+                    <div class="zone-empty">No zones loaded</div>
+                </div>
             </div>
         </div>
 
