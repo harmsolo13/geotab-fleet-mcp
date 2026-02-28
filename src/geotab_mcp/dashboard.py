@@ -336,6 +336,23 @@ def api_vehicle_trips(device_id: str):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/zones/delete", methods=["POST"])
+def api_zones_delete():
+    """Delete zones by name."""
+    data = request.get_json(silent=True) or {}
+    name = data.get("name")
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    try:
+        deleted = _get_client().delete_zones_by_name(name)
+        # Invalidate zone cache
+        _cache_store.pop("api_zones", None)
+        api_tracker.delete_cached_response("api_zones")
+        return jsonify({"deleted": deleted, "name": name})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/zones")
 def api_zones():
     """All geofence zones (cached)."""
