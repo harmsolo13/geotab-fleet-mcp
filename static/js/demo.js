@@ -861,7 +861,7 @@ function buildDemoSteps() {
     // Zone Intelligence — AI suggestions
     demoStep(
         "Zone Intelligence — AI-powered suggestions",
-        "The Zone Intelligence panel uses trip stop-point clustering to suggest optimal geofence placements. It analyzes where vehicles frequently stop and recommends zones based on density patterns.",
+        "The Zone Intelligence panel uses Gemini AI to analyze trip stop-point clusters — generating intelligent zone names, types, and radii. Ace AI then validates the suggestions with fleet intelligence.",
         () => {
             suggestZones();
         },
@@ -878,8 +878,8 @@ function buildDemoSteps() {
             const items = document.querySelectorAll("#zoneList .zone-suggestion");
             return items.length > 0;
         },
-        resultNarration: "The AI analyzed trip stop patterns across the fleet and generated zone suggestions. Each suggestion shows the stop frequency, suggested radius, and zone type. You can create any suggestion with one click, or delete zones from the sidebar.",
-        waitTimeout: 30000
+        resultNarration: "Gemini analyzed the trip stop clusters and generated intelligent zone names, types, and reasoning. If Ace responded in time, you'll see a purple Ace badge with fleet validation insights. You can create any suggestion with one click.",
+        waitTimeout: 60000
     });
 
     // Theme Toggle
