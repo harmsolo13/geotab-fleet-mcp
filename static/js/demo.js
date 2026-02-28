@@ -490,6 +490,11 @@ function stopDemo() {
     if (soloMode) toggleSoloMode();
     closeReplay();
     closeDetail();
+    // Clear suggestion preview circles
+    if (window.suggestionCircles) {
+        suggestionCircles.forEach(c => { if (c) c.setMap(null); });
+        suggestionCircles = [];
+    }
     // Delete demo-created zone from Geotab + clear map overlays
     zonePolygons.forEach(p => p.setMap(null));
     zonePolygons = [];
@@ -851,6 +856,30 @@ function buildDemoSteps() {
         },
         resultNarration: "The geofence was created and is now visible on the map as a large red zone boundary covering the fleet's operating area. This was a live API call to the Geotab platform.",
         waitTimeout: 90000
+    });
+
+    // Zone Intelligence — AI suggestions
+    demoStep(
+        "Zone Intelligence — AI-powered suggestions",
+        "The Zone Intelligence panel uses trip stop-point clustering to suggest optimal geofence placements. It analyzes where vehicles frequently stop and recommends zones based on density patterns.",
+        () => {
+            suggestZones();
+        },
+        0
+    );
+
+    // Wait for suggestions to appear
+    DEMO_STEPS.push({
+        label: "Analyzing trip patterns...",
+        narration: null,
+        action: null,
+        pauseAfter: 500,
+        waitFor: () => {
+            const items = document.querySelectorAll("#zoneList .zone-suggestion");
+            return items.length > 0;
+        },
+        resultNarration: "The AI analyzed trip stop patterns across the fleet and generated zone suggestions. Each suggestion shows the stop frequency, suggested radius, and zone type. You can create any suggestion with one click, or delete zones from the sidebar.",
+        waitTimeout: 30000
     });
 
     // Theme Toggle

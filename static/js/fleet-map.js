@@ -5,6 +5,8 @@
 let map;
 let markers = {};       // device_id -> AdvancedMarkerElement
 let zonePolygons = [];  // Google Maps Polygon overlays
+let zoneData = [];      // Current zone data for sidebar
+let suggestionCircles = []; // Preview circles for AI suggestions
 let tripPolylines = []; // Google Maps Polyline overlays
 let vehicles = [];      // Current vehicle data
 let faults = [];        // Current fault data
@@ -164,6 +166,8 @@ async function loadZones(forceRefresh) {
         const data = await resp.json();
         if (data.zones) {
             drawZones(data.zones);
+        } else {
+            updateZoneList([]);
         }
     } catch (err) {
         console.error("Failed to load zones:", err);
@@ -901,29 +905,232 @@ function getVehicleStatus(vehicle) {
 
 // ── Zone Drawing ────────────────────────────────────────────────────────
 
+// Zone type detection + color mapping
+const ZONE_COLORS = {
+    depot: "#3b82f6",
+    risk: "#ef4444",
+    delivery: "#10b981",
+    service: "#f59e0b",
+    custom: "#8b5cf6",
+};
+
+function detectZoneType(zone) {
+    const text = ((zone.name || "") + " " + (zone.comment || "")).toLowerCase();
+    if (/depot|warehouse|hub|yard|base|hq|headquarters/.test(text)) return "depot";
+    if (/speed|risk|violation|danger|accident|hazard/.test(text)) return "risk";
+    if (/deliver|customer|drop|pickup|store|shop/.test(text)) return "delivery";
+    if (/service|maintenance|repair|fuel|gas|charge/.test(text)) return "service";
+    return "custom";
+}
+
 function drawZones(zones) {
     if (!map) return; // Map not initialized yet
     // Clear existing
     zonePolygons.forEach(p => p.setMap(null));
     zonePolygons = [];
+    zoneData = [];
 
     zones.forEach(zone => {
         if (!zone.centroid) return;
+
+        const zType = detectZoneType(zone);
+        const color = ZONE_COLORS[zType] || ZONE_COLORS.custom;
 
         // Draw circle from centroid + estimated radius
         const circle = new google.maps.Circle({
             map: map,
             center: { lat: zone.centroid.y, lng: zone.centroid.x },
             radius: zone.radius || 300,
-            fillColor: "#f87171",
+            fillColor: color,
             fillOpacity: 0.1,
-            strokeColor: "#f87171",
+            strokeColor: color,
             strokeWeight: 1.5,
             strokeOpacity: 0.4,
             clickable: false,
         });
         zonePolygons.push(circle);
+        zoneData.push({ ...zone, zoneType: zType, color });
     });
+
+    updateZoneList(zoneData);
+}
+
+
+// ── Zone Sidebar ────────────────────────────────────────────────────────
+
+function updateZoneList(zones) {
+    const list = document.getElementById("zoneList");
+    if (!list) return;
+
+    if (!zones || zones.length === 0) {
+        list.innerHTML = '<div class="zone-empty">No zones loaded</div>';
+        return;
+    }
+
+    list.innerHTML = zones.map((z, i) => {
+        const name = escapeHTML(z.name || "Unnamed Zone");
+        const zType = z.zoneType || "custom";
+        const color = z.color || ZONE_COLORS[zType] || ZONE_COLORS.custom;
+        const radius = z.radius ? `${z.radius}m` : "";
+        return `<div class="zone-item" style="--zone-color: ${color}" data-zone-idx="${i}" onclick="panToZone(${i})">
+            <div class="zone-item-info">
+                <div class="zone-item-name">${name}</div>
+                <div class="zone-item-meta">${radius}</div>
+            </div>
+            <span class="zone-type-badge ${zType}">${zType}</span>
+            <button class="zone-delete-btn" onclick="event.stopPropagation(); deleteZone('${escapeHTML(z.name)}')" title="Delete zone">&times;</button>
+        </div>`;
+    }).join("");
+}
+
+function panToZone(idx) {
+    if (!map || idx < 0 || idx >= zoneData.length) return;
+    const z = zoneData[idx];
+    if (z.centroid) {
+        map.panTo({ lat: z.centroid.y, lng: z.centroid.x });
+        map.setZoom(15);
+    }
+}
+
+async function deleteZone(name) {
+    if (!name) return;
+    try {
+        const resp = await fetch("/api/zones/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name }),
+        });
+        const data = await resp.json();
+        if (data.error) {
+            showToast("Delete failed: " + data.error, "error");
+            return;
+        }
+        showToast(`Deleted zone: ${name}`, "success");
+        await loadZones(true);
+    } catch (err) {
+        showToast("Delete failed: " + err.message, "error");
+    }
+}
+
+async function suggestZones() {
+    const btn = document.getElementById("suggestZonesBtn");
+    if (btn) { btn.disabled = true; btn.textContent = "Analyzing..."; }
+
+    // Clear old suggestions
+    suggestionCircles.forEach(c => c.setMap(null));
+    suggestionCircles = [];
+
+    try {
+        const resp = await fetch("/api/zones/suggest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+        });
+        const data = await resp.json();
+        if (data.error) {
+            showToast("Suggestion failed: " + data.error, "error");
+            return;
+        }
+
+        const suggestions = data.suggestions || [];
+        if (suggestions.length === 0) {
+            showToast("No zone suggestions — need more trip data", "info");
+            return;
+        }
+
+        // Draw preview circles on map (dashed)
+        suggestions.forEach(s => {
+            const color = ZONE_COLORS[s.type] || ZONE_COLORS.custom;
+            const circle = new google.maps.Circle({
+                map: map,
+                center: { lat: s.lat, lng: s.lng },
+                radius: s.radius_m || 500,
+                fillColor: color,
+                fillOpacity: 0.08,
+                strokeColor: color,
+                strokeWeight: 2,
+                strokeOpacity: 0.5,
+                clickable: false,
+            });
+            suggestionCircles.push(circle);
+        });
+
+        // Add suggestion items to zone list
+        const list = document.getElementById("zoneList");
+        if (list) {
+            // Keep existing zones, append suggestions
+            const existingHTML = list.innerHTML.includes("zone-empty") ? "" : list.innerHTML;
+            const suggestHTML = suggestions.map((s, i) => {
+                const color = ZONE_COLORS[s.type] || ZONE_COLORS.custom;
+                return `<div class="zone-item zone-suggestion" style="--zone-color: ${color}" onclick="panToSuggestion(${s.lat}, ${s.lng})">
+                    <div class="zone-item-info">
+                        <div class="zone-item-name">${escapeHTML(s.name)}</div>
+                        <div class="zone-item-meta">${s.stop_count} stops &middot; ${s.radius_m}m</div>
+                    </div>
+                    <span class="zone-type-badge ${s.type}">${s.type}</span>
+                    <button class="zone-create-btn" onclick="event.stopPropagation(); createSuggestedZone(${i})" data-suggest-idx="${i}">Create</button>
+                </div>`;
+            }).join("");
+            list.innerHTML = existingHTML + suggestHTML;
+        }
+
+        // Store suggestions for creation
+        window._zoneSuggestions = suggestions;
+        showToast(`${suggestions.length} zone suggestions from ${data.total_stops} trip stops`, "success");
+    } catch (err) {
+        showToast("Suggestion failed: " + err.message, "error");
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = "Suggest Zones"; }
+    }
+}
+
+function panToSuggestion(lat, lng) {
+    if (!map) return;
+    map.panTo({ lat, lng });
+    map.setZoom(14);
+}
+
+async function createSuggestedZone(idx) {
+    const suggestions = window._zoneSuggestions || [];
+    if (idx < 0 || idx >= suggestions.length) return;
+    const s = suggestions[idx];
+
+    // Disable the create button
+    const btn = document.querySelector(`[data-suggest-idx="${idx}"]`);
+    if (btn) { btn.disabled = true; btn.textContent = "Creating..."; }
+
+    try {
+        const resp = await fetch("/api/zones/create-suggestion", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                name: s.name,
+                lat: s.lat,
+                lng: s.lng,
+                radius_m: s.radius_m,
+                type: s.type,
+            }),
+        });
+        const data = await resp.json();
+        if (data.error) {
+            showToast("Create failed: " + data.error, "error");
+            if (btn) { btn.disabled = false; btn.textContent = "Create"; }
+            return;
+        }
+
+        showToast(`Created zone: ${s.name}`, "success");
+
+        // Remove the corresponding preview circle
+        if (suggestionCircles[idx]) {
+            suggestionCircles[idx].setMap(null);
+            suggestionCircles[idx] = null;
+        }
+
+        // Reload zones to show the newly created one
+        await loadZones(true);
+    } catch (err) {
+        showToast("Create failed: " + err.message, "error");
+        if (btn) { btn.disabled = false; btn.textContent = "Create"; }
+    }
 }
 
 

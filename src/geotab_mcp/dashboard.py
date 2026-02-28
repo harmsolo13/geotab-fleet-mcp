@@ -373,6 +373,99 @@ def api_zones():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/zones/suggest", methods=["POST"])
+def api_zones_suggest():
+    """Suggest zones based on fleet trip stop-point clustering."""
+    try:
+        client = _get_client()
+        # Gather vehicles
+        vehicles = _cache_get("vehicles")
+        if vehicles is None:
+            vehicles = client.get_vehicles(limit=500)
+            _cache_set("vehicles", vehicles, "vehicles")
+
+        # Collect stop points from cached trip data across all vehicles
+        stop_points = []
+        for v in vehicles[:50]:  # cap at 50 vehicles to keep it fast
+            cache_key = f"trips_{v['id']}_None_None"
+            trip_data = _cache_get(cache_key)
+            if trip_data is None:
+                try:
+                    trips = client.get_trips(device_id=v["id"], limit=50)
+                    trip_data = {"count": len(trips), "trips": trips}
+                    _cache_set(cache_key, trip_data, "trips")
+                except Exception:
+                    continue
+            for trip in (trip_data.get("trips") or []):
+                sp = trip.get("stopPoint")
+                if sp and sp.get("x") is not None and sp.get("y") is not None:
+                    stop_points.append((sp["y"], sp["x"]))  # lat, lng
+
+        if not stop_points:
+            return jsonify({"suggestions": [], "message": "No trip stop data available"})
+
+        # Grid-based clustering (~500m cells)
+        cells: dict[tuple, list] = {}
+        for lat, lng in stop_points:
+            cell_key = (round(lat * 200) / 200, round(lng * 200) / 200)
+            cells.setdefault(cell_key, []).append((lat, lng))
+
+        # Filter cells with 3+ stops, rank by frequency
+        candidates = []
+        for (clat, clng), pts in cells.items():
+            if len(pts) >= 3:
+                avg_lat = sum(p[0] for p in pts) / len(pts)
+                avg_lng = sum(p[1] for p in pts) / len(pts)
+                candidates.append({
+                    "lat": round(avg_lat, 6),
+                    "lng": round(avg_lng, 6),
+                    "stop_count": len(pts),
+                    "radius_m": 500,
+                })
+
+        # Sort by stop count descending, take top 8
+        candidates.sort(key=lambda c: c["stop_count"], reverse=True)
+        suggestions = candidates[:8]
+
+        # Assign names and types
+        existing_zones = _cache_get("api_zones")
+        existing_names = set()
+        if existing_zones:
+            for z in existing_zones.get("zones", []):
+                existing_names.add((z.get("name") or "").lower())
+
+        for i, s in enumerate(suggestions):
+            zone_type = "depot" if s["stop_count"] >= 8 else "delivery" if s["stop_count"] >= 5 else "service"
+            base_name = f"Frequent Stop Area {i + 1}"
+            s["name"] = base_name
+            s["type"] = zone_type
+
+        return jsonify({"suggestions": suggestions, "total_stops": len(stop_points)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/zones/create-suggestion", methods=["POST"])
+def api_zones_create_suggestion():
+    """Create a zone from a suggestion."""
+    data = request.get_json(silent=True) or {}
+    name = data.get("name")
+    lat = data.get("lat")
+    lng = data.get("lng")
+    radius_m = data.get("radius_m", 500)
+    if not name or lat is None or lng is None:
+        return jsonify({"error": "name, lat, lng are required"}), 400
+    try:
+        points = circle_points(lat, lng, radius_m)
+        zone_id = _get_client().create_zone(name=name, points=points, comment=f"AI-suggested zone ({data.get('type', 'custom')})")
+        # Invalidate zone cache
+        _cache_store.pop("api_zones", None)
+        api_tracker.delete_cached_response("api_zones")
+        return jsonify({"zone_id": zone_id, "name": name})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/faults")
 def api_faults():
     """Active fault codes (cached, keyed by device filter)."""
