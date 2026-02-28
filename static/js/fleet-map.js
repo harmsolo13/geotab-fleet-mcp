@@ -831,8 +831,9 @@ function closeReplay() {
 
 function shortName(v) {
     const name = v.name || v.id;
-    const match = name.match(/\d+$/);
-    return match ? match[0] : name.split(/[\s\-]+/).pop();
+    // Extract first number sequence (e.g. "Unit 01 — Ford Transit" → "01")
+    const match = name.match(/\d+/);
+    return match ? match[0] : name.split(/[\s\-—]+/)[0];
 }
 
 function updateMarkers() {
