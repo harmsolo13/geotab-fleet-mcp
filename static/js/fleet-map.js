@@ -829,6 +829,12 @@ function closeReplay() {
 
 // ── Map Markers ─────────────────────────────────────────────────────────
 
+function shortName(v) {
+    const name = v.name || v.id;
+    const match = name.match(/\d+$/);
+    return match ? match[0] : name.split(/[\s\-]+/).pop();
+}
+
 function updateMarkers() {
     if (!map) return; // Map not initialized yet
     const validVehicles = vehicles.filter(v => v.latitude != null && v.longitude != null);
@@ -863,7 +869,7 @@ function updateMarkers() {
             const el = markers[v.id].content;
             if (el) {
                 el.className = `map-marker ${status}`;
-                el.querySelector(".marker-label").textContent = v.name || v.id; // textContent is XSS-safe
+                el.querySelector(".marker-label").textContent = shortName(v); // textContent is XSS-safe
             }
         } else {
             // Create new marker
@@ -871,7 +877,7 @@ function updateMarkers() {
             markerEl.className = `map-marker ${status}`;
             markerEl.innerHTML = `
                 <span class="marker-dot"></span>
-                <span class="marker-label">${v.name || v.id}</span>
+                <span class="marker-label">${escapeHTML(shortName(v))}</span>
             `;
 
             const marker = new google.maps.marker.AdvancedMarkerElement({
@@ -1070,7 +1076,7 @@ async function suggestZones() {
                 return `<div class="zone-item zone-suggestion" style="--zone-color: ${color}" onclick="panToSuggestion(${s.lat}, ${s.lng})">
                     <div class="zone-item-info">
                         <div class="zone-item-name">${escapeHTML(s.name)} ${aceBadge}</div>
-                        <div class="zone-item-meta">${s.stop_count} stops &middot; ${s.radius_m}m</div>
+                        <div class="zone-item-meta">${s.stop_count} stops${s.exception_count ? ` &middot; ${s.exception_count} exceptions` : ""} &middot; ${s.radius_m}m${s.risk_types && s.risk_types.length ? `<br>${s.risk_types.join(", ")}` : ""}</div>
                         ${reasoningHTML}
                     </div>
                     <span class="zone-type-badge ${s.type}">${s.type}</span>
@@ -1251,6 +1257,13 @@ async function selectVehicle(deviceId) {
         });
     }
 
+    // Safety Events section
+    html += `
+        <p class="detail-section-title">Safety Events</p>
+        <button class="events-load-btn" onclick="loadVehicleEvents('${deviceId}')">View Events</button>
+        <div id="vehicleEvents"></div>
+    `;
+
     content.innerHTML = html;
     panel.classList.remove("hidden");
 }
@@ -1274,6 +1287,50 @@ function closeDetail() {
 
     // Deselect list
     document.querySelectorAll(".vehicle-item.selected").forEach(el => el.classList.remove("selected"));
+}
+
+
+// ── Vehicle Events ──────────────────────────────────────────────────────
+
+const EVENT_SEVERITY = {
+    "Major Collision": "red", "Minor Collision": "red", "Possible Collision": "red",
+    "Speeding": "amber", "Max Speed": "amber", "Harsh Braking": "amber",
+    "Hard Acceleration": "amber", "Harsh Cornering": "amber",
+    "Seat Belt": "yellow", "Engine Light On": "yellow", "Engine Fault": "yellow",
+    "Application Exception": "yellow",
+};
+
+async function loadVehicleEvents(deviceId) {
+    const container = document.getElementById("vehicleEvents");
+    const btn = container?.previousElementSibling;
+    if (!container) return;
+    if (btn) { btn.disabled = true; btn.textContent = "Loading..."; }
+
+    try {
+        const resp = await fetch(`/api/exceptions?device_id=${encodeURIComponent(deviceId)}`);
+        const data = await resp.json();
+        const events = data.exceptions || [];
+
+        if (btn) btn.style.display = "none";
+
+        if (events.length === 0) {
+            container.innerHTML = '<div class="event-empty">No safety events found</div>';
+            return;
+        }
+
+        container.innerHTML = events.slice(0, 10).map(e => {
+            const severity = EVENT_SEVERITY[e.ruleName] || "yellow";
+            const time = e.activeFrom ? formatDateTime(e.activeFrom) : "Unknown";
+            const dur = e.duration || "";
+            return `<div class="event-item event-${severity}">
+                <div class="event-rule">${escapeHTML(e.ruleName || e.ruleId || "Unknown")}</div>
+                <div class="event-meta">${time}${dur ? " &middot; " + escapeHTML(dur) : ""}</div>
+            </div>`;
+        }).join("") + (events.length > 10 ? `<div class="event-meta" style="text-align:center;padding:6px">+${events.length - 10} more</div>` : "");
+    } catch (err) {
+        container.innerHTML = '<div class="event-empty">Failed to load events</div>';
+        if (btn) { btn.disabled = false; btn.textContent = "View Events"; }
+    }
 }
 
 

@@ -51,6 +51,7 @@ api_tracker.init_db()
 _WARM_KEYS = [
     "vehicles", "locations", "api_vehicles", "api_zones",
     "api_faults_all", "api_status", "api_fleet_kpis", "api_heatmap",
+    "api_exceptions",
 ]
 
 
@@ -103,6 +104,7 @@ _TTL = {
     "faults": 120,
     "status": 60,
     "report": 300,
+    "exceptions": 300,
 }
 
 _cache_store: dict[str, tuple[float, object]] = {}  # key -> (expires_at, data)
@@ -149,6 +151,8 @@ def _infer_ttl_key(key: str) -> str:
         return "vehicles"
     if "location" in key:
         return "locations"
+    if "exception" in key:
+        return "exceptions"
     if "fault" in key:
         return "faults"
     if "zone" in key:
@@ -432,21 +436,76 @@ def api_zones_suggest():
             cell_key = (round(lat * 200) / 200, round(lng * 200) / 200)
             cells.setdefault(cell_key, []).append((lat, lng))
 
+        # --- Exception event clustering (risk hotspots) ---
+        exc_cells: dict[tuple, list] = {}  # cell_key -> list of rule names
+        exc_data = _cache_get("api_exceptions")
+        if exc_data is None:
+            try:
+                events = _get_client().get_exception_events(limit=500)
+                # Enrich with lat/lng from trip cache
+                trip_lookup: dict[str, list] = {}
+                for v in vehicles:
+                    ck = f"trips_{v['id']}_None_None"
+                    td = _cache_get(ck)
+                    if td:
+                        for trip in (td.get("trips") or []):
+                            sp = trip.get("stopPoint")
+                            if sp and sp.get("x") is not None and sp.get("y") is not None:
+                                trip_lookup.setdefault(v["id"], []).append({
+                                    "start": trip.get("start", ""),
+                                    "stop": trip.get("stop", ""),
+                                    "lat": sp["y"], "lng": sp["x"],
+                                })
+                for evt in events:
+                    evt["lat"] = None
+                    evt["lng"] = None
+                    for t in trip_lookup.get(evt.get("deviceId"), []):
+                        if t["start"] <= evt.get("activeFrom", "") <= t["stop"]:
+                            evt["lat"] = t["lat"]
+                            evt["lng"] = t["lng"]
+                            break
+                exc_data = {"count": len(events), "exceptions": events}
+                _cache_set("api_exceptions", exc_data, "exceptions")
+            except Exception as e:
+                print(f"[zone-suggest] Exception fetch error: {e}", flush=True)
+                exc_data = {"exceptions": []}
+
+        for evt in exc_data.get("exceptions", []):
+            if evt.get("lat") and evt.get("lng"):
+                cell_key = (round(evt["lat"] * 200) / 200, round(evt["lng"] * 200) / 200)
+                exc_cells.setdefault(cell_key, []).append(evt.get("ruleName", "Unknown"))
+
         # Filter cells with 2+ stops, rank by frequency
         candidates = []
         for (clat, clng), pts in cells.items():
             if len(pts) >= 2:
                 avg_lat = sum(p[0] for p in pts) / len(pts)
                 avg_lng = sum(p[1] for p in pts) / len(pts)
+                # Check if this cell also has exceptions
+                exc_rules = exc_cells.pop((clat, clng), [])
                 candidates.append({
                     "lat": round(avg_lat, 6),
                     "lng": round(avg_lng, 6),
                     "stop_count": len(pts),
+                    "exception_count": len(exc_rules),
+                    "risk_types": list(set(exc_rules)),
                     "radius_m": 500,
                 })
 
-        # Sort by stop count descending, take top 8
-        candidates.sort(key=lambda c: c["stop_count"], reverse=True)
+        # Add pure exception clusters (no stop overlap)
+        for (clat, clng), rules in exc_cells.items():
+            if len(rules) >= 2:
+                candidates.append({
+                    "lat": round(clat, 6),
+                    "lng": round(clng, 6),
+                    "stop_count": 0,
+                    "exception_count": len(rules),
+                    "risk_types": list(set(rules)),
+                    "radius_m": 500,
+                })
+
+        # Sort by combined score (stops + exceptions), take top 8
+        candidates.sort(key=lambda c: c["stop_count"] + c["exception_count"] * 2, reverse=True)
         suggestions = candidates[:8]
 
         # Gather existing zone names to avoid duplicates
@@ -462,12 +521,23 @@ def api_zones_suggest():
             api_key = os.environ.get("GEMINI_API_KEY", "")
             if api_key:
                 gclient = genai.Client(api_key=api_key)
-                cluster_summary = [{"lat": s["lat"], "lng": s["lng"], "stop_count": s["stop_count"]} for s in suggestions]
+                cluster_summary = [
+                    {
+                        "lat": s["lat"], "lng": s["lng"],
+                        "stop_count": s["stop_count"],
+                        "exception_count": s.get("exception_count", 0),
+                        "risk_types": s.get("risk_types", []),
+                    }
+                    for s in suggestions
+                ]
                 prompt = (
-                    "You are a fleet operations analyst. Analyze these vehicle stop clusters and return ONLY a JSON array.\n"
+                    "You are a fleet operations analyst. Analyze these vehicle stop/event clusters and return ONLY a JSON array.\n"
                     f"Existing zone names (avoid duplicates): {json.dumps(existing_names)}\n\n"
+                    "Clusters include stop_count (trip endpoints) and exception_count (safety events like speeding, harsh braking, collisions).\n"
+                    "Clusters with high exception_count and risk_types should be typed as 'risk' with names reflecting the hazard "
+                    '(e.g. "Highway Speeding Corridor", "Intersection Collision Zone").\n\n'
                     "For each cluster, return one object with exactly these keys:\n"
-                    '- "name": short descriptive zone name (e.g. "Main Depot", "CBD Delivery Hub")\n'
+                    '- "name": short descriptive zone name\n'
                     '- "type": one of depot|delivery|service|risk|custom\n'
                     '- "radius_m": optimal radius in meters (200-800)\n'
                     '- "reasoning": one sentence explaining why this zone matters\n\n'
@@ -507,8 +577,15 @@ def api_zones_suggest():
         if not gemini_ok:
             # Mechanical fallback
             for i, s in enumerate(suggestions):
-                s["type"] = "depot" if s["stop_count"] >= 8 else "delivery" if s["stop_count"] >= 5 else "service"
-                s["name"] = f"Frequent Stop Area {i + 1}"
+                if s.get("exception_count", 0) >= 2 and s["stop_count"] == 0:
+                    s["type"] = "risk"
+                    s["name"] = f"Risk Hotspot {i + 1}"
+                elif s.get("exception_count", 0) >= 2:
+                    s["type"] = "risk"
+                    s["name"] = f"High-Risk Stop Area {i + 1}"
+                else:
+                    s["type"] = "depot" if s["stop_count"] >= 8 else "delivery" if s["stop_count"] >= 5 else "service"
+                    s["name"] = f"Frequent Stop Area {i + 1}"
                 s["reasoning"] = ""
 
         # --- Ace AI validation (optional, 30s timeout) ---
@@ -570,6 +647,74 @@ def api_faults():
         if stale:
             return jsonify(stale), 200
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/exceptions")
+def api_exceptions():
+    """Exception events with location enrichment from trip correlation."""
+    cache_key = "api_exceptions"
+    _cache_force(cache_key)
+    device_id = request.args.get("device_id")
+
+    # Fetch all exceptions (cached), then filter per-device client-side
+    cached = _cache_get(cache_key)
+    if cached is None:
+        try:
+            events = _get_client().get_exception_events(limit=500)
+
+            # Enrich with lat/lng by correlating with cached trip data
+            # Build trip lookup: deviceId -> list of (start, stop, lat, lng)
+            trip_lookup: dict[str, list] = {}
+            vehicles_data = _cache_get("vehicles")
+            if vehicles_data:
+                for v in vehicles_data:
+                    ck = f"trips_{v['id']}_None_None"
+                    trip_data = _cache_get(ck)
+                    if trip_data:
+                        for trip in (trip_data.get("trips") or []):
+                            sp = trip.get("stopPoint")
+                            if sp and sp.get("x") is not None and sp.get("y") is not None:
+                                trip_lookup.setdefault(v["id"], []).append({
+                                    "start": trip.get("start", ""),
+                                    "stop": trip.get("stop", ""),
+                                    "lat": sp["y"],
+                                    "lng": sp["x"],
+                                })
+
+            # Match each exception to nearest trip by timestamp
+            for evt in events:
+                evt["lat"] = None
+                evt["lng"] = None
+                dev_trips = trip_lookup.get(evt.get("deviceId"), [])
+                evt_time = evt.get("activeFrom", "")
+                for t in dev_trips:
+                    if t["start"] <= evt_time <= t["stop"]:
+                        evt["lat"] = t["lat"]
+                        evt["lng"] = t["lng"]
+                        break
+
+            # Also enrich with device name from vehicle cache
+            name_map = {}
+            if vehicles_data:
+                name_map = {v["id"]: v.get("name", v["id"]) for v in vehicles_data}
+            for evt in events:
+                evt["deviceName"] = name_map.get(evt.get("deviceId"), evt.get("deviceId", ""))
+
+            cached = {"count": len(events), "exceptions": events}
+            _cache_set(cache_key, cached, "exceptions")
+        except Exception as e:
+            stale = _cache_stale(cache_key)
+            if stale:
+                cached = stale
+            else:
+                return jsonify({"error": str(e)}), 500
+
+    # Filter by device_id if requested
+    if device_id and cached:
+        filtered = [e for e in cached.get("exceptions", []) if e.get("deviceId") == device_id]
+        return jsonify({"count": len(filtered), "exceptions": filtered})
+
+    return jsonify(cached)
 
 
 @app.route("/api/status")
