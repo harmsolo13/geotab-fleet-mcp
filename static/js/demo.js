@@ -697,7 +697,7 @@ function buildDemoSteps() {
     // Activity Heatmap
     demoStep(
         "Activity Heatmap — fleet density",
-        "The activity heatmap visualizes fleet density using vehicle positions with weighted clusters — showing depot areas, route corridors, and hotspot hubs across the fleet's operating area.",
+        "The activity heatmap visualizes fleet density using vehicle positions across the fleet's operating area.",
         () => {
             closeReplay();
             closeDetail();
