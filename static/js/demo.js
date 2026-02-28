@@ -100,6 +100,10 @@ function _collectDemoLines(extraLines) {
                 const clean = step.resultNarration.replace(/\*\*/g, "").replace(/`/g, "").replace(/\n+/g, ". ");
                 lines.push({ text: clean, voice: "narrator" });
             }
+            if (step.voiceQuery) {
+                const clean = step.voiceQuery.replace(/\*\*/g, "").replace(/`/g, "").replace(/\n+/g, ". ");
+                lines.push({ text: clean, voice: "narrator" });
+            }
         }
     }
     return lines;
@@ -287,7 +291,20 @@ function demoVoiceQuery(text, callback) {
     // Add red pulse to mic button
     if (micBtn) micBtn.classList.add("recording");
 
-    // Typewriter text into input at ~40ms/char
+    // Speak the command text via TTS + typewriter simultaneously
+    let typeDone = false;
+    let speakDone = false;
+    const checkDone = () => {
+        if (typeDone && speakDone) {
+            if (micBtn) micBtn.classList.remove("recording");
+            if (callback) callback();
+        }
+    };
+
+    // TTS speaks the command (narrator voice)
+    demoSpeak(text, () => { speakDone = true; checkDone(); });
+
+    // Typewriter text into input — pace matches ~40ms/char
     let i = 0;
     input.value = "";
     const typeTimer = setInterval(() => {
@@ -297,9 +314,8 @@ function demoVoiceQuery(text, callback) {
             i++;
         } else {
             clearInterval(typeTimer);
-            // Remove pulse, then send
-            if (micBtn) micBtn.classList.remove("recording");
-            if (callback) callback();
+            typeDone = true;
+            checkDone();
         }
     }, 40);
 }
@@ -380,6 +396,25 @@ function runNextDemoStep() {
         } else {
             const t = setTimeout(pollWait, 500);
             demoTimeouts.push(t);
+        }
+        return;
+    }
+
+    // If step has a voiceQuery, play narration first, then voice query, then advance
+    if (step.voiceQuery) {
+        const startVoiceQuery = () => {
+            if (!demoRunning) return;
+            demoVoiceQuery(step.voiceQuery, () => {
+                if (!demoRunning) return;
+                sendMessage();
+                const t = setTimeout(runNextDemoStep, step.pauseAfter || 500);
+                demoTimeouts.push(t);
+            });
+        };
+        if (step.narration) {
+            demoSpeak(step.narration, startVoiceQuery);
+        } else {
+            startVoiceQuery();
         }
         return;
     }
@@ -667,18 +702,17 @@ function buildDemoSteps() {
         0
     );
 
-    // Chat Query — send and wait for response
-    // Track ASSISTANT bubble count to detect when AI responds (not user bubbles)
-    demoStep(
-        "Asking: Which vehicles are moving?",
-        "Asking 'which vehicles are moving right now' triggers a function call to the Geotab API. Gemini retrieves the data and responds conversationally with specific vehicle names and speeds.",
-        () => {
+    // Chat Query — narration first, then voice query with TTS + typewriter, then send
+    DEMO_STEPS.push({
+        label: "Asking: Which vehicles are moving?",
+        narration: "Asking 'which vehicles are moving right now' triggers a function call to the Geotab API. Gemini retrieves the data and responds conversationally with specific vehicle names and speeds.",
+        action: () => {
             chatSending = false;
             window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
-            demoVoiceQuery("Which vehicles are moving right now?", () => sendMessage());
         },
-        0
-    );
+        voiceQuery: "Which vehicles are moving right now?",
+        pauseAfter: 0,
+    });
 
     // Wait for a new ASSISTANT message, then narrator summarises the response
     DEMO_STEPS.push({
@@ -695,16 +729,16 @@ function buildDemoSteps() {
     });
 
     // Safety query — exception events
-    demoStep(
-        "Asking: Any speeding violations?",
-        "Now asking about speeding violations. This calls the exception events API to retrieve rule violations from the fleet.",
-        () => {
+    DEMO_STEPS.push({
+        label: "Asking: Any speeding violations?",
+        narration: "Now asking about speeding violations. This calls the exception events API to retrieve rule violations from the fleet.",
+        action: () => {
             chatSending = false;
             window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
-            demoVoiceQuery("Any speeding violations this week?", () => sendMessage());
         },
-        0
-    );
+        voiceQuery: "Any speeding violations this week?",
+        pauseAfter: 0,
+    });
 
     // Wait for safety response
     DEMO_STEPS.push({
@@ -721,16 +755,16 @@ function buildDemoSteps() {
     });
 
     // Send driver message — action command
-    demoStep(
-        "Action: Send message to driver",
-        "The assistant can send messages directly to in-cab devices. This triggers a text message function call to the vehicle's Geotab GO device.",
-        () => {
+    DEMO_STEPS.push({
+        label: "Action: Send message to driver",
+        narration: "The assistant can send messages directly to in-cab devices. This triggers a text message function call to the vehicle's Geotab GO device.",
+        action: () => {
             chatSending = false;
             window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
-            demoVoiceQuery("Send a message to Demo - 01 saying please return to depot", () => sendMessage());
         },
-        0
-    );
+        voiceQuery: "Send a message to Demo - 01 saying please return to depot",
+        pauseAfter: 0,
+    });
 
     // Wait for message response
     DEMO_STEPS.push({
@@ -747,16 +781,16 @@ function buildDemoSteps() {
     });
 
     // Geofence creation — action command (coords near fleet depot, 2km radius for visibility)
-    demoStep(
-        "Action: Create a geofence zone",
-        "Finally, asking it to create a geofence triggers a zone creation function call. The zone appears on the map immediately.",
-        () => {
+    DEMO_STEPS.push({
+        label: "Action: Create a geofence zone",
+        narration: "Finally, asking it to create a geofence triggers a zone creation function call. The zone appears on the map immediately.",
+        action: () => {
             chatSending = false;
             window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
-            demoVoiceQuery("Create a geofence called Fleet Operations Zone at 43.52, -79.69 with a 2km radius", () => sendMessage());
         },
-        0
-    );
+        voiceQuery: "Create a geofence called Fleet Operations Zone at 43.52, -79.69 with a 2km radius",
+        pauseAfter: 0,
+    });
 
     // Wait for geofence response
     DEMO_STEPS.push({
