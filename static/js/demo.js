@@ -245,6 +245,38 @@ function demoSpeakBrowser(text, onEnd) {
     speechSynthesis.speak(utterance);
 }
 
+// ── Chat Auto-Scroll (slow reveal for long AI responses) ─────────────
+
+let _demoScrollTimer = null;
+
+function demoScrollChat() {
+    // Slowly scroll the chat container so the full AI response is visible
+    if (_demoScrollTimer) { clearInterval(_demoScrollTimer); _demoScrollTimer = null; }
+    const container = document.getElementById("chatMessages");
+    if (!container) return;
+    // Find the last assistant bubble
+    const bubbles = container.querySelectorAll(".chat-bubble.assistant");
+    const lastBubble = bubbles[bubbles.length - 1];
+    if (!lastBubble) return;
+    // Scroll so the TOP of the response is visible first
+    const bubbleTop = lastBubble.offsetTop - container.offsetTop - 10;
+    container.scrollTop = Math.max(0, bubbleTop);
+    // Then slowly scroll down to reveal the full response
+    const targetScroll = container.scrollHeight;
+    _demoScrollTimer = setInterval(() => {
+        if (!demoRunning || container.scrollTop >= targetScroll - container.clientHeight) {
+            clearInterval(_demoScrollTimer);
+            _demoScrollTimer = null;
+            return;
+        }
+        container.scrollTop += 2;
+    }, 40);
+}
+
+function demoStopScrollChat() {
+    if (_demoScrollTimer) { clearInterval(_demoScrollTimer); _demoScrollTimer = null; }
+}
+
 // ── Voice-Triggered Chat Query ────────────────────────────────────────
 
 function demoVoiceQuery(text, callback) {
@@ -317,7 +349,10 @@ function runNextDemoStep() {
             // If resultNarration is set, narrator speaks a summary of the AI response
             if (step.resultNarration) {
                 showDemoLabel("AI responded");
+                // Slowly scroll through the AI response while narrator speaks
+                demoScrollChat();
                 demoSpeak(step.resultNarration, () => {
+                    demoStopScrollChat();
                     if (!demoRunning) return;
                     const t = setTimeout(runNextDemoStep, step.pauseAfter);
                     demoTimeouts.push(t);
@@ -368,11 +403,20 @@ function stopDemo() {
     demoRunning = false;
     demoTimeouts.forEach(clearTimeout);
     demoTimeouts = [];
+    demoStopScrollChat();
     // Stop Piper audio if playing
     if (demoAudio) { demoAudio.pause(); demoAudio = null; }
     hideDemoLabel();
     setTimeout(removeDemoOverlay, 500);
     demoChatCenter();
+    // Reset demo-created visual state
+    if (soloMode) toggleSoloMode();
+    closeReplay();
+    closeDetail();
+    // Clear zone overlays created during demo
+    zonePolygons.forEach(p => p.setMap(null));
+    zonePolygons = [];
+    fitAllVehicles();
     showToast("Demo ended", "info", 2000);
 }
 
