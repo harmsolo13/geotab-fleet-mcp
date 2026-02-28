@@ -53,6 +53,22 @@ def init_db() -> None:
             ttl_seconds INTEGER NOT NULL
         )
     """)
+    # Zone alert event log — persists every entry/exit for history + reports
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS zone_alert_events (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp     TEXT NOT NULL,
+            device_id     TEXT NOT NULL,
+            device_name   TEXT NOT NULL,
+            zone_id       TEXT NOT NULL,
+            zone_name     TEXT NOT NULL,
+            zone_type     TEXT,
+            action        TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_zae_ts ON zone_alert_events (timestamp)
+    """)
     # Zone alert configuration — tracks which zones have entry/exit alerts enabled
     conn.execute("""
         CREATE TABLE IF NOT EXISTS zone_alerts (
@@ -268,3 +284,84 @@ def delete_zone_alert_by_name(zone_name: str) -> None:
         conn.close()
     except Exception:
         pass
+
+
+# ── Zone Alert Event Logging ─────────────────────────────────────────────
+
+def log_zone_event(
+    device_id: str, device_name: str, zone_id: str,
+    zone_name: str, zone_type: str | None, action: str,
+) -> None:
+    """Insert a zone entry/exit event."""
+    try:
+        conn = _get_db()
+        conn.execute(
+            "INSERT INTO zone_alert_events "
+            "(timestamp, device_id, device_name, zone_id, zone_name, zone_type, action) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (datetime.now(timezone.utc).isoformat(), device_id, device_name,
+             zone_id, zone_name, zone_type, action),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def get_zone_events(hours: int = 24, limit: int = 200) -> list[dict]:
+    """Recent zone alert events ordered by timestamp desc."""
+    from datetime import timedelta
+    try:
+        conn = _get_db()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        rows = conn.execute(
+            "SELECT * FROM zone_alert_events WHERE timestamp >= ? "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (cutoff, limit),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def get_zone_event_summary(hours: int = 24) -> dict:
+    """Aggregated zone event summary for reports."""
+    from datetime import timedelta
+    try:
+        conn = _get_db()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        rows = conn.execute(
+            "SELECT zone_name, device_name, action, COUNT(*) as cnt "
+            "FROM zone_alert_events WHERE timestamp >= ? "
+            "GROUP BY zone_name, device_name, action",
+            (cutoff,),
+        ).fetchall()
+        conn.close()
+
+        total_entries = 0
+        total_exits = 0
+        by_zone: dict[str, dict] = {}
+        by_vehicle: dict[str, dict] = {}
+
+        for r in rows:
+            zn, dn, act, cnt = r["zone_name"], r["device_name"], r["action"], r["cnt"]
+            if act == "entered":
+                total_entries += cnt
+            else:
+                total_exits += cnt
+            # By zone
+            z = by_zone.setdefault(zn, {"zone_name": zn, "entries": 0, "exits": 0})
+            z["entries" if act == "entered" else "exits"] += cnt
+            # By vehicle
+            v = by_vehicle.setdefault(dn, {"device_name": dn, "entries": 0, "exits": 0})
+            v["entries" if act == "entered" else "exits"] += cnt
+
+        return {
+            "total_entries": total_entries,
+            "total_exits": total_exits,
+            "by_zone": list(by_zone.values()),
+            "by_vehicle": list(by_vehicle.values()),
+        }
+    except Exception:
+        return {"total_entries": 0, "total_exits": 0, "by_zone": [], "by_vehicle": []}
