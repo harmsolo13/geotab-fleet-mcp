@@ -490,9 +490,14 @@ function stopDemo() {
     if (soloMode) toggleSoloMode();
     closeReplay();
     closeDetail();
-    // Clear zone overlays created during demo
+    // Delete demo-created zone from Geotab + clear map overlays
     zonePolygons.forEach(p => p.setMap(null));
     zonePolygons = [];
+    fetch("/api/zones/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Fleet Operations Zone" }),
+    }).then(() => loadZones(true)).catch(() => {});
     fitAllVehicles();
     showToast("Demo ended", "info", 2000);
 }
