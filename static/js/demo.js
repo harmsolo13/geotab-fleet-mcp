@@ -515,7 +515,7 @@ function buildDemoSteps() {
     // Chat Query 1 — which vehicles are moving
     DEMO_STEPS.push({
         label: "Asking: Which vehicles are moving?",
-        narration: "Ok, let's look at 3 chat commands. They will trigger a function call to the Geotab API. Gemini retrieves the data and responds conversationally.",
+        narration: "Ok, let's look at 2 chat commands. They will trigger a function call to the Geotab API. Gemini retrieves the data and responds conversationally.",
         action: () => {
             chatSending = false;
             window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
@@ -538,33 +538,7 @@ function buildDemoSteps() {
         waitTimeout: 90000
     });
 
-    // Chat Query 2 — speeding violations
-    DEMO_STEPS.push({
-        label: "Asking: Any speeding violations?",
-        narration: null,
-        action: () => {
-            chatSending = false;
-            window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
-        },
-        voiceQuery: "Any speeding violations this week?",
-        pauseAfter: 0,
-    });
-
-    // Wait for safety response
-    DEMO_STEPS.push({
-        label: "Waiting for AI response...",
-        narration: null,
-        action: null,
-        pauseAfter: 500,
-        waitFor: () => {
-            const assistantBubbles = document.querySelectorAll("#chatMessages .chat-bubble.assistant");
-            return assistantBubbles.length > (window._demoAssistantCount || 0);
-        },
-        resultNarration: "The assistant queried exception events and returned the speeding violations found this week, including the rule names and vehicle details.",
-        waitTimeout: 90000
-    });
-
-    // Chat Query 3 — send driver message
+    // Chat Query 2 — send driver message
     DEMO_STEPS.push({
         label: "Action: Send message to driver",
         narration: "The assistant can also send messages directly to in-cab devices, and triggers a text message function call to the vehicle's Geotab GO device.",
