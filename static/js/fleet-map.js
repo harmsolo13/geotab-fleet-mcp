@@ -2173,22 +2173,8 @@ async function sendMessage() {
         return;
     }
     if (lower.includes("play") && lower.includes("demo") || lower === "demo" || lower === "start demo" || lower === "run demo") {
-        const introText = "Starting the Fleet Command Center demo. Sit back and enjoy the tour! Leda from Google Gemini will run you through the functions of the system.";
-        appendMessage("assistant", introText);
-
-        // Build demo steps early so we can pre-cache all audio from disk
-        if (typeof buildDemoSteps === "function") buildDemoSteps();
-        if (typeof demoPreCacheAudio === "function") {
-            const introClean = introText.replace(/\*\*/g, "").replace(/`/g, "").replace(/\n+/g, ". ");
-            demoPreCacheAudio([{ text: introClean, voice: "assistant" }]);
-        }
-
-        // Speak intro with assistant voice (pre-recorded on disk), then start demo
-        if (typeof demoSpeak === "function") {
-            demoSpeak(introText, () => runDemo(), "assistant");
-        } else {
-            setTimeout(() => runDemo(), 1500);
-        }
+        // Start demo immediately — TTS lines are cached on disk (3ms each)
+        if (typeof runDemo === "function") runDemo();
         return;
     }
     if (lower === "stop demo" || lower === "end demo") {
