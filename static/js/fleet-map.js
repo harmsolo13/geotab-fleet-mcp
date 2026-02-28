@@ -13,6 +13,11 @@ let faults = [];        // Current fault data
 let selectedVehicle = null;
 let refreshTimer = null;
 
+// Zone alert state
+let zoneAlertConfig = {};    // zone_id -> {enabled, zone_name}
+let vehicleZoneState = {};   // device_id -> {zone_id -> "inside"|"outside"}
+let alertsInitialized = false; // Skip first cycle to establish baseline
+
 // Chat state
 let chatSessionId = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36);
 let chatOpen = false;
@@ -41,6 +46,11 @@ let replaySpeedMs = 200; // ms between frames
 let replayCumDist = [];   // cumulative distance in metres at each point
 let replayMaxSpeed = [];  // max speed seen up to each point
 let replayAvgSpeed = [];  // average non-zero speed up to each point
+
+// Stop pin markers on map (from inline waypoints)
+let evStopMarkers = [];
+let evStopPolylines = [];
+const STOP_COLORS = ["#4a9eff", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#f97316", "#14b8a6", "#6366f1"];
 
 const REFRESH_INTERVAL = 10000; // 10 seconds
 const DEFAULT_CENTER = { lat: 43.6532, lng: -79.3832 }; // Toronto (Geotab HQ)
@@ -115,6 +125,7 @@ function startDataLoading() {
 
     loadVehicles();
     loadZones();
+    loadZoneAlertConfig();
     loadFaults();
     setTimeout(loadKPIs, 3000);
 
@@ -153,6 +164,7 @@ async function loadVehicles() {
         updateMarkers();
         updateVehicleList();
         updateStats();
+        checkZoneAlerts();
     } catch (err) {
         console.error("Failed to load vehicles:", err);
         updateConnectionBadge(false);
@@ -353,9 +365,11 @@ function showToast(message, type = "info", duration = 4000) {
 // ── Slideout Panel (Report + Guide) ──────────────────────────────────
 
 let slideoutOpen = false;
-let slideoutCurrentTab = "report"; // "report" or "guide"
+let slideoutCurrentTab = "report"; // "report", "guide", or "events"
 let slideoutReportHTML = null;     // cached report HTML
 let slideoutGuideHTML = null;      // cached guide HTML
+let slideoutEventsHTML = null;     // cached events HTML
+let slideoutEventsDeviceId = null; // device ID for cached events
 
 // ── Slideout Resize ──
 (function initSlideoutResize() {
@@ -416,6 +430,7 @@ function closeSlideout() {
     slideoutOpen = false;
     panel.classList.add("hidden");
     document.getElementById("slideoutActions").style.display = "none";
+    _clearStopPins();
 }
 
 function switchSlideoutTab(tab) {
@@ -423,9 +438,13 @@ function switchSlideoutTab(tab) {
     // Update tab active states
     document.getElementById("slideoutTabReport").classList.toggle("active", tab === "report");
     document.getElementById("slideoutTabGuide").classList.toggle("active", tab === "guide");
+    document.getElementById("slideoutTabEvents").classList.toggle("active", tab === "events");
 
     // Show/hide report actions (only for report tab)
     const actions = document.getElementById("slideoutActions");
+
+    // Clear stop pins when switching away from events tab
+    if (tab !== "events") _clearStopPins();
 
     if (tab === "report") {
         if (slideoutReportHTML) {
@@ -440,6 +459,13 @@ function switchSlideoutTab(tab) {
             document.getElementById("slideoutBody").innerHTML = slideoutGuideHTML;
         } else {
             loadGuideContent();
+        }
+    } else if (tab === "events") {
+        actions.style.display = "none";
+        if (slideoutEventsHTML) {
+            document.getElementById("slideoutBody").innerHTML = slideoutEventsHTML;
+        } else {
+            document.getElementById("slideoutBody").innerHTML = '<div class="ev-empty">Select a vehicle to view its event timeline</div>';
         }
     }
 }
@@ -516,6 +542,15 @@ function popOutSlideout() {
             win.document.close();
         } else {
             showToast("Generate a report first", "warning");
+        }
+    } else if (slideoutCurrentTab === "events") {
+        if (slideoutEventsHTML) {
+            const html = _getEventsPopoutHTML();
+            const win = window.open("", "_blank");
+            win.document.write(html);
+            win.document.close();
+        } else {
+            showToast("Load vehicle events first", "warning");
         }
     } else {
         window.open("/guide", "_blank");
@@ -986,18 +1021,28 @@ function updateZoneList(zones) {
         const zType = z.zoneType || "custom";
         const color = z.color || ZONE_COLORS[zType] || ZONE_COLORS.custom;
         const radius = z.radius ? `${z.radius}m` : "";
+        const alertCfg = z.id ? zoneAlertConfig[z.id] : null;
+        const alertOn = alertCfg && alertCfg.enabled;
+        const zId = escapeHTML(z.id || "");
+        const zName = escapeHTML(z.name || "");
         return `<div class="zone-item" style="--zone-color: ${color}" data-zone-idx="${i}" onclick="panToZone(${i})">
             <div class="zone-item-info">
                 <div class="zone-item-name">${name}</div>
                 <div class="zone-item-meta">${radius}</div>
             </div>
+            <label class="zone-alert-toggle" onclick="event.stopPropagation()" title="${alertOn ? 'Alerts on' : 'Alerts off'}">
+                <input type="checkbox" ${alertOn ? "checked" : ""} onchange="toggleZoneAlert('${zId}', '${zName}', this.checked)">
+                <span class="zone-alert-icon">${alertOn ? "&#128276;" : "&#128277;"}</span>
+            </label>
             <span class="zone-type-badge ${zType}">${zType}</span>
             <button class="zone-delete-btn" onclick="event.stopPropagation(); deleteZone('${escapeHTML(z.name)}')" title="Delete zone">&times;</button>
         </div>`;
     }).join("");
 
-    // Update zone badge
-    updateBadge("badgeZones", zones.length + " zone" + (zones.length > 1 ? "s" : ""), "neutral");
+    // Update zone badge with monitoring count
+    const monitored = zones.filter(z => z.id && zoneAlertConfig[z.id] && zoneAlertConfig[z.id].enabled).length;
+    const badgeText = zones.length + " zone" + (zones.length > 1 ? "s" : "") + (monitored ? ` \u00b7 ${monitored} monitored` : "");
+    updateBadge("badgeZones", badgeText, monitored ? "info" : "neutral");
 }
 
 function panToZone(idx) {
@@ -1034,12 +1079,13 @@ async function suggestZones() {
     if (btn) { btn.disabled = true; btn.textContent = "Analyzing..."; }
 
     // Clear old suggestions
-    suggestionCircles.forEach(c => c.setMap(null));
+    suggestionCircles.forEach(c => { if (c) c.setMap(null); });
     suggestionCircles = [];
+    window._zoneSuggestions = [];
 
     try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 60000);
+        const timeout = setTimeout(() => controller.abort(), 30000);
         const resp = await fetch("/api/zones/suggest", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1144,18 +1190,151 @@ async function createSuggestedZone(idx) {
 
         showToast(`Created zone: ${s.name}`, "success");
 
-        // Remove the corresponding preview circle
+        // Auto-enable alerts for risk zones
+        if (data.zone_id && (s.type === "risk" || /risk|speed|hazard|collision/i.test(s.name))) {
+            zoneAlertConfig[data.zone_id] = { enabled: true, zone_name: s.name };
+        }
+
+        // Remove the created suggestion from the list
         if (suggestionCircles[idx]) {
             suggestionCircles[idx].setMap(null);
             suggestionCircles[idx] = null;
         }
 
-        // Reload zones to show the newly created one
+        // Mark as created in the suggestions array
+        suggestions[idx]._created = true;
+
+        // Update button to show created state
+        if (btn) { btn.disabled = true; btn.textContent = "Created"; btn.style.opacity = "0.5"; }
+
+        // Reload zones to show the newly created one, then re-append remaining suggestions
         await loadZones(true);
+        await loadZoneAlertConfig();
+        _reappendSuggestions();
     } catch (err) {
         showToast("Create failed: " + err.message, "error");
         if (btn) { btn.disabled = false; btn.textContent = "Create"; }
     }
+}
+
+function _reappendSuggestions() {
+    const suggestions = window._zoneSuggestions || [];
+    const remaining = suggestions.filter(s => !s._created);
+    if (remaining.length === 0) return;
+    const list = document.getElementById("zoneList");
+    if (!list) return;
+    const suggestHTML = suggestions.map((s, i) => {
+        const color = ZONE_COLORS[s.type] || ZONE_COLORS.custom;
+        const reasoningHTML = s.reasoning ? `<div class="zone-item-reasoning">${escapeHTML(s.reasoning)}</div>` : '';
+        const created = s._created;
+        const btnHTML = created
+            ? `<button class="zone-create-btn" disabled style="opacity:0.5">Created</button>`
+            : `<button class="zone-create-btn" onclick="event.stopPropagation(); createSuggestedZone(${i})" data-suggest-idx="${i}">Create</button>`;
+        return `<div class="zone-item zone-suggestion" style="--zone-color: ${color}${created ? ';opacity:0.5' : ''}" onclick="panToSuggestion(${s.lat}, ${s.lng})">
+            <div class="zone-item-info">
+                <div class="zone-item-name">${escapeHTML(s.name)}</div>
+                <div class="zone-item-meta">${s.stop_count} stops${s.exception_count ? ` &middot; ${s.exception_count} exceptions` : ""} &middot; ${s.radius_m}m${s.risk_types && s.risk_types.length ? `<br>${s.risk_types.join(", ")}` : ""}</div>
+                ${reasoningHTML}
+            </div>
+            <span class="zone-type-badge ${s.type}">${s.type}</span>
+            ${btnHTML}
+        </div>`;
+    }).join("");
+    list.innerHTML += suggestHTML;
+}
+
+
+// ── Zone Entry/Exit Alerts ──────────────────────────────────────────────
+
+async function loadZoneAlertConfig() {
+    try {
+        const resp = await fetch("/api/zone-alerts/config");
+        const data = await resp.json();
+        zoneAlertConfig = {};
+        (data.configs || []).forEach(c => {
+            zoneAlertConfig[c.zone_id] = { enabled: !!c.alerts_enabled, zone_name: c.zone_name };
+        });
+    } catch (err) {
+        console.error("Failed to load zone alert config:", err);
+    }
+}
+
+function checkZoneAlerts() {
+    if (!zoneData.length || !vehicles.length) return;
+
+    // Build lookup: zone name -> zone data (with centroid/radius)
+    const enabledZones = [];
+    zoneData.forEach(z => {
+        if (!z.centroid || !z.id) return;
+        const cfg = zoneAlertConfig[z.id];
+        if (cfg && cfg.enabled) enabledZones.push(z);
+    });
+    if (!enabledZones.length) { alertsInitialized = true; return; }
+
+    const newState = {};
+    vehicles.forEach(v => {
+        if (v.latitude == null || v.longitude == null) return;
+        newState[v.id] = {};
+        enabledZones.forEach(z => {
+            const dist = haversine(v.latitude, v.longitude, z.centroid.y, z.centroid.x);
+            const radius = z.radius || 300;
+            newState[v.id][z.id] = dist < radius ? "inside" : "outside";
+        });
+    });
+
+    // Fire alerts on state transitions (skip first cycle to baseline)
+    if (alertsInitialized) {
+        Object.keys(newState).forEach(deviceId => {
+            const prev = vehicleZoneState[deviceId] || {};
+            const curr = newState[deviceId];
+            Object.keys(curr).forEach(zoneId => {
+                const was = prev[zoneId];
+                const now = curr[zoneId];
+                if (was && now && was !== now) {
+                    const v = vehicles.find(x => x.id === deviceId);
+                    const z = zoneData.find(x => x.id === zoneId);
+                    if (v && z) {
+                        const action = now === "inside" ? "entered" : "exited";
+                        showZoneAlert(shortName(v), z.name || "Unknown Zone", action, z.zoneType || "custom");
+                    }
+                }
+            });
+        });
+    }
+
+    vehicleZoneState = newState;
+    alertsInitialized = true;
+}
+
+function showZoneAlert(vehicleName, zoneName, action, zoneType) {
+    const arrow = action === "entered" ? "&#9654;" : "&#9664;";
+    const type = zoneType === "risk" ? "warning" : "info";
+    const msg = `${arrow} <b>${escapeHTML(vehicleName)}</b> ${action} <b>${escapeHTML(zoneName)}</b>`;
+    showToast(msg, type, 6000);
+}
+
+async function toggleZoneAlert(zoneId, zoneName, enabled) {
+    try {
+        await fetch("/api/zone-alerts/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ zone_id: zoneId, zone_name: zoneName, enabled }),
+        });
+    } catch (err) {
+        console.error("Failed to toggle zone alert:", err);
+    }
+    // Update local state
+    if (enabled) {
+        zoneAlertConfig[zoneId] = { enabled: true, zone_name: zoneName };
+    } else if (zoneAlertConfig[zoneId]) {
+        zoneAlertConfig[zoneId].enabled = false;
+    }
+    // Reset zone state to re-baseline (avoid false alerts)
+    Object.keys(vehicleZoneState).forEach(devId => {
+        if (vehicleZoneState[devId]) delete vehicleZoneState[devId][zoneId];
+    });
+    alertsInitialized = false;
+    showToast(`Alerts ${enabled ? "enabled" : "disabled"} for ${escapeHTML(zoneName)}`, "info", 2000);
 }
 
 
@@ -1254,8 +1433,8 @@ async function selectVehicle(deviceId) {
 
     if (trips.length > 0) {
         html += `<p class="detail-section-title">Recent Trips (${trips.length})</p>`;
-        trips.slice(0, 5).forEach(t => {
-            const dist = t.distance ? (t.distance / 1000).toFixed(1) + " km" : "N/A";
+        [...trips].reverse().slice(0, 5).forEach(t => {
+            const dist = t.distance ? t.distance.toFixed(1) + " km" : "N/A";
             const replayBtn = t.start && t.stop
                 ? `<button class="trip-replay-btn" onclick="event.stopPropagation(); startTripReplay('${deviceId}', '${t.start}', '${t.stop}')" title="Replay trip">&#9654;</button>`
                 : "";
@@ -1272,7 +1451,8 @@ async function selectVehicle(deviceId) {
     // Safety Events section
     html += `
         <p class="detail-section-title">Safety Events</p>
-        <button class="events-load-btn" onclick="loadVehicleEvents('${deviceId}')">View Events</button>
+        <button class="events-load-btn" id="evQuickViewBtn" onclick="loadVehicleEvents('${deviceId}')">Quick View</button>
+        <button class="events-load-btn" onclick="openEventsSlideout('${deviceId}')">Full Timeline &rarr;</button>
         <div id="vehicleEvents"></div>
     `;
 
@@ -1302,6 +1482,401 @@ function closeDetail() {
 }
 
 
+// ── Stop Detection & Map Pins ───────────────────────────────────────────
+
+function _detectStops(points) {
+    if (!points || points.length < 2) return [];
+    const stops = [];
+    let inStop = false;
+    let stopStart = null;
+    let stopLats = [], stopLngs = [];
+
+    for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        const speed = p.speed || 0;
+        if (speed < 5) {
+            if (!inStop) {
+                inStop = true;
+                stopStart = p;
+                stopLats = [p.lat];
+                stopLngs = [p.lng];
+            } else {
+                stopLats.push(p.lat);
+                stopLngs.push(p.lng);
+            }
+        } else if (inStop) {
+            // Close the stop cluster
+            const prev = points[i - 1] || stopStart;
+            const arriveTime = new Date(stopStart.dateTime);
+            const departTime = new Date(prev.dateTime);
+            const durationSec = (departTime - arriveTime) / 1000;
+            if (durationSec >= 20) {
+                const avgLat = stopLats.reduce((a, b) => a + b, 0) / stopLats.length;
+                const avgLng = stopLngs.reduce((a, b) => a + b, 0) / stopLngs.length;
+                stops.push({ lat: avgLat, lng: avgLng, arriveTime, departTime, durationSec });
+            }
+            inStop = false;
+        }
+    }
+    // Close trailing stop
+    if (inStop && stopStart) {
+        const last = points[points.length - 1];
+        const arriveTime = new Date(stopStart.dateTime);
+        const departTime = new Date(last.dateTime);
+        const durationSec = (departTime - arriveTime) / 1000;
+        if (durationSec >= 20) {
+            const avgLat = stopLats.reduce((a, b) => a + b, 0) / stopLats.length;
+            const avgLng = stopLngs.reduce((a, b) => a + b, 0) / stopLngs.length;
+            stops.push({ lat: avgLat, lng: avgLng, arriveTime, departTime, durationSec });
+        }
+    }
+    // Merge stops that are very close together (<100m)
+    const merged = [];
+    for (const s of stops) {
+        if (merged.length > 0) {
+            const prev = merged[merged.length - 1];
+            if (haversine(prev.lat, prev.lng, s.lat, s.lng) < 100) {
+                prev.departTime = s.departTime;
+                prev.durationSec = (prev.departTime - prev.arriveTime) / 1000;
+                prev.lat = (prev.lat + s.lat) / 2;
+                prev.lng = (prev.lng + s.lng) / 2;
+                continue;
+            }
+        }
+        merged.push({ ...s });
+    }
+    return merged;
+}
+
+function _formatStopDuration(sec) {
+    if (sec >= 3600) return Math.floor(sec / 3600) + "h " + Math.floor((sec % 3600) / 60) + "m";
+    if (sec >= 60) return Math.floor(sec / 60) + "m " + Math.floor(sec % 60) + "s";
+    return Math.floor(sec) + "s";
+}
+
+function _showTripStopPins(stops) {
+    _clearStopPins();
+    if (!map || !stops || stops.length === 0) return;
+    stops.forEach((s, i) => {
+        const color = STOP_COLORS[i % STOP_COLORS.length];
+        const pinEl = document.createElement("div");
+        pinEl.className = "ev-stop-pin";
+        pinEl.style.borderColor = color;
+        pinEl.style.color = color;
+        pinEl.textContent = i + 1;
+        const marker = new google.maps.marker.AdvancedMarkerElement({
+            map: map,
+            position: { lat: s.lat, lng: s.lng },
+            content: pinEl,
+            title: `Stop ${i + 1}`,
+            zIndex: 900 + i,
+        });
+        evStopMarkers.push(marker);
+    });
+    // Draw colored polyline segments connecting consecutive stops
+    for (let i = 0; i < stops.length - 1; i++) {
+        const color = STOP_COLORS[i % STOP_COLORS.length];
+        const seg = new google.maps.Polyline({
+            path: [
+                { lat: stops[i].lat, lng: stops[i].lng },
+                { lat: stops[i + 1].lat, lng: stops[i + 1].lng },
+            ],
+            geodesic: true,
+            strokeColor: color,
+            strokeOpacity: 0.8,
+            strokeWeight: 3,
+            map: map,
+            zIndex: 800,
+        });
+        evStopPolylines.push(seg);
+    }
+}
+
+function _clearStopPins() {
+    evStopMarkers.forEach(m => { m.map = null; });
+    evStopMarkers = [];
+    evStopPolylines.forEach(p => p.setMap(null));
+    evStopPolylines = [];
+}
+
+
+// ── Events Slideout Timeline ────────────────────────────────────────────
+
+async function openEventsSlideout(deviceId) {
+    // Close detail panel without clearing trip polylines
+    document.getElementById("detailPanel").classList.add("hidden");
+
+    // Open slideout to events tab with spinner
+    openSlideout("events");
+    document.getElementById("slideoutBody").innerHTML = '<div class="loading">Loading event timeline...</div>';
+    _clearStopPins();
+
+    const vehicle = vehicles.find(v => v.id === deviceId);
+    const vName = vehicle ? escapeHTML(vehicle.name || vehicle.id) : escapeHTML(deviceId);
+    const status = vehicle ? getVehicleStatus(vehicle) : "offline";
+    const statusLabel = { moving: "Moving", stopped: "Stopped", fault: "Fault", offline: "Offline" }[status] || "Unknown";
+    const statusColor = { moving: "#34d399", stopped: "#8892a8", fault: "#f87171", offline: "#5a6478" }[status] || "#8892a8";
+
+    try {
+        // Parallel fetch: trips + exceptions
+        const [trips, excResp] = await Promise.all([
+            loadTrips(deviceId),
+            fetch(`/api/exceptions?device_id=${encodeURIComponent(deviceId)}`).then(r => r.json()).catch(() => ({ exceptions: [] }))
+        ]);
+        const exceptions = excResp.exceptions || [];
+
+        // Correlate exceptions to trips by timestamp overlap
+        const matchedExcIds = new Set();
+        const tripData = trips.map(t => {
+            const tStart = new Date(t.start).getTime();
+            const tStop = new Date(t.stop).getTime();
+            const matched = exceptions.filter(e => {
+                const eTime = new Date(e.activeFrom).getTime();
+                return eTime >= tStart && eTime <= tStop;
+            });
+            matched.forEach(e => matchedExcIds.add(e.activeFrom + e.ruleName));
+            return { trip: t, exceptions: matched };
+        });
+
+        const unmatched = exceptions.filter(e => !matchedExcIds.has(e.activeFrom + e.ruleName));
+
+        // Sort newest first
+        tripData.sort((a, b) => new Date(b.trip.start).getTime() - new Date(a.trip.start).getTime());
+
+        // Fetch GPS replay for top 5 trips to detect inline stops
+        const GPS_DETAIL_LIMIT = 5;
+        const gpsPromises = tripData.slice(0, GPS_DETAIL_LIMIT).map(td => {
+            const t = td.trip;
+            if (!t.start || !t.stop) return Promise.resolve([]);
+            return fetch(`/api/vehicle/${encodeURIComponent(deviceId)}/trip-replay?from=${encodeURIComponent(t.start)}&to=${encodeURIComponent(t.stop)}`)
+                .then(r => r.json()).then(d => d.points || []).catch(() => []);
+        });
+        const gpsResults = await Promise.all(gpsPromises);
+
+        // Detect stops for top 5 trips
+        const tripStops = gpsResults.map(pts => _detectStops(pts));
+
+        // Build HTML
+        let html = `<div class="ev-header">
+            <h3>${vName}</h3>
+            <span class="ev-header-status" style="color:${statusColor}">${statusLabel}</span>
+            <span style="color:var(--text-muted);font-size:12px"> &mdash; ${trips.length} trip${trips.length !== 1 ? "s" : ""}, ${exceptions.length} event${exceptions.length !== 1 ? "s" : ""}</span>
+        </div>`;
+
+        if (trips.length === 0 && exceptions.length === 0) {
+            html += '<div class="ev-empty">No trips or events found for this vehicle</div>';
+        }
+
+        // Store stops data for map pin interaction
+        const allTripStops = [];
+
+        tripData.forEach((td, idx) => {
+            const t = td.trip;
+            const hasGps = idx < GPS_DETAIL_LIMIT;
+            const stops = hasGps ? tripStops[idx] : [];
+            allTripStops.push(stops);
+            const dist = t.distance ? t.distance.toFixed(1) : "0";
+            const maxSpd = t.maximumSpeed?.toFixed(0) || "?";
+            const avgSpd = t.averageSpeed?.toFixed(0) || "?";
+            const driving = _formatDuration(t.drivingDuration);
+            const idling = _formatDuration(t.idlingDuration);
+
+            const replayBtn = t.start && t.stop
+                ? `<button class="ev-btn" onclick="event.stopPropagation(); startTripReplay('${deviceId}', '${t.start}', '${t.stop}')" title="Replay trip">&#9654; Replay</button>`
+                : "";
+
+            // Click trip card header to show its stops on map
+            const tripClickAttr = hasGps && stops.length > 0
+                ? ` onclick="_evShowStopsForTrip(${idx})"  style="cursor:pointer"`
+                : "";
+
+            html += `<div class="ev-trip" data-trip-idx="${idx}"${tripClickAttr}>
+                <div class="ev-trip-header">
+                    <div class="ev-trip-time">${formatDateTime(t.start)} &rarr; ${formatDateTime(t.stop)}</div>
+                    ${replayBtn}
+                </div>
+                <div class="ev-trip-stats">
+                    <div class="ev-stat"><div class="ev-stat-val">${dist} km</div><div class="ev-stat-label">Distance</div></div>
+                    <div class="ev-stat"><div class="ev-stat-val">${maxSpd} km/h</div><div class="ev-stat-label">Max Speed</div></div>
+                    <div class="ev-stat"><div class="ev-stat-val">${avgSpd} km/h</div><div class="ev-stat-label">Avg Speed</div></div>
+                    <div class="ev-stat"><div class="ev-stat-val">${driving}</div><div class="ev-stat-label">Driving</div></div>
+                    <div class="ev-stat"><div class="ev-stat-val">${idling}</div><div class="ev-stat-label">Idling</div></div>
+                    <div class="ev-stat"><div class="ev-stat-val">${stops.length || "0"}</div><div class="ev-stat-label">Stops</div></div>
+                </div>`;
+
+            // Inline waypoint stops (top 5 trips only)
+            if (hasGps && stops.length > 0) {
+                html += `<div class="ev-waypoints"><div class="ev-waypoints-title">Stops (${stops.length})</div>`;
+                stops.forEach((s, si) => {
+                    const arrive = s.arriveTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                    const depart = s.departTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                    const dur = _formatStopDuration(s.durationSec);
+                    const coords = s.lat.toFixed(3) + ", " + s.lng.toFixed(3);
+                    const dotColor = STOP_COLORS[si % STOP_COLORS.length];
+                    html += `<div class="ev-waypoint" onclick="event.stopPropagation(); _evPanToStop(${idx}, ${si})" title="Pan to stop">
+                        <span class="ev-waypoint-dot" style="background:${dotColor}"></span>
+                        <span class="ev-waypoint-time">Stop ${si + 1} &mdash; ${arrive} &rarr; ${depart} (${dur})</span>
+                        <span class="ev-waypoint-coords">${coords}</span>
+                    </div>`;
+                });
+                html += `</div>`;
+            }
+
+            // Nested exceptions
+            if (td.exceptions.length > 0) {
+                html += `<div class="ev-exceptions"><div class="ev-exceptions-title">Events (${td.exceptions.length})</div>`;
+                td.exceptions.forEach(e => {
+                    const sev = EVENT_SEVERITY[e.ruleName] || "yellow";
+                    const time = e.activeFrom ? formatDateTime(e.activeFrom) : "";
+                    const dur = e.duration ? " &middot; " + escapeHTML(e.duration) : "";
+                    html += `<div class="ev-exc-item">
+                        <span class="ev-exc-dot ${sev}"></span>
+                        <span class="ev-exc-name">${escapeHTML(e.ruleName || e.ruleId || "Unknown")}</span>
+                        <span class="ev-exc-time">${time}${dur}</span>
+                    </div>`;
+                });
+                html += `</div>`;
+            }
+
+            html += `</div>`;
+        });
+
+        // Unmatched exceptions (newest first)
+        if (unmatched.length > 0) {
+            unmatched.sort((a, b) => new Date(b.activeFrom).getTime() - new Date(a.activeFrom).getTime());
+            html += `<div class="ev-unmatched-title">Unmatched Events (${unmatched.length})</div>`;
+            unmatched.forEach(e => {
+                const sev = EVENT_SEVERITY[e.ruleName] || "yellow";
+                const time = e.activeFrom ? formatDateTime(e.activeFrom) : "";
+                const dur = e.duration ? " &middot; " + escapeHTML(e.duration) : "";
+                html += `<div class="ev-exc-item">
+                    <span class="ev-exc-dot ${sev}"></span>
+                    <span class="ev-exc-name">${escapeHTML(e.ruleName || e.ruleId || "Unknown")}</span>
+                    <span class="ev-exc-time">${time}${dur}</span>
+                </div>`;
+            });
+        }
+
+        slideoutEventsHTML = html;
+        slideoutEventsDeviceId = deviceId;
+        document.getElementById("slideoutBody").innerHTML = html;
+
+        // Store stops data globally for interaction handlers
+        window._evTripStops = allTripStops;
+
+        // Show pins for the first trip with stops
+        const firstWithStops = allTripStops.findIndex(s => s.length > 0);
+        if (firstWithStops >= 0) {
+            _showTripStopPins(allTripStops[firstWithStops]);
+        }
+
+    } catch (err) {
+        console.error("Failed to load event timeline:", err);
+        document.getElementById("slideoutBody").innerHTML = '<div class="ev-empty">Failed to load event timeline</div>';
+    }
+}
+
+// Interaction handlers for inline waypoints
+function _evShowStopsForTrip(tripIdx) {
+    const stops = window._evTripStops && window._evTripStops[tripIdx];
+    if (stops && stops.length > 0) {
+        _showTripStopPins(stops);
+        // Fit map to show all stops
+        if (map && stops.length > 1) {
+            const bounds = new google.maps.LatLngBounds();
+            stops.forEach(s => bounds.extend({ lat: s.lat, lng: s.lng }));
+            map.fitBounds(bounds, { padding: 80 });
+        } else if (map && stops.length === 1) {
+            map.panTo({ lat: stops[0].lat, lng: stops[0].lng });
+            map.setZoom(15);
+        }
+    }
+}
+
+function _evPanToStop(tripIdx, stopIdx) {
+    const stops = window._evTripStops && window._evTripStops[tripIdx];
+    if (!stops || !stops[stopIdx]) return;
+    // Ensure this trip's pins are showing
+    _showTripStopPins(stops);
+    const s = stops[stopIdx];
+    if (map) {
+        map.panTo({ lat: s.lat, lng: s.lng });
+        map.setZoom(16);
+    }
+}
+
+function _formatDuration(durStr) {
+    if (!durStr) return "—";
+    // Handle HH:MM:SS
+    if (/^\d+:\d+:\d+$/.test(durStr)) {
+        const parts = durStr.split(":").map(Number);
+        if (parts[0] > 0) return parts[0] + "h " + parts[1] + "m";
+        if (parts[1] > 0) return parts[1] + "m " + parts[2] + "s";
+        return parts[2] + "s";
+    }
+    // Handle ISO PT duration (PT1H30M15S)
+    const m = durStr.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+    if (m) {
+        const h = parseInt(m[1] || 0), mi = parseInt(m[2] || 0), s = parseInt(m[3] || 0);
+        if (h > 0) return h + "h " + mi + "m";
+        if (mi > 0) return mi + "m " + s + "s";
+        return s + "s";
+    }
+    return escapeHTML(durStr);
+}
+
+function _getEventsPopoutHTML() {
+    const content = slideoutEventsHTML || "";
+    const timestamp = new Date().toLocaleString();
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vehicle Event Timeline — ${timestamp}</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 900px; margin: 40px auto; padding: 0 24px; color: #1a1d23; line-height: 1.6; }
+  h3 { color: #2b7de9; margin: 0 0 4px; }
+  .ev-header { margin-bottom: 16px; }
+  .ev-header-status { font-size: 12px; font-weight: 600; }
+  .ev-trip { border: 1px solid #e5e7eb; border-radius: 12px; margin-bottom: 12px; overflow: hidden; }
+  .ev-trip-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #e5e7eb; background: #f9fafb; }
+  .ev-trip-time { font-size: 12px; font-weight: 600; }
+  .ev-trip-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 10px 14px; }
+  .ev-stat { text-align: center; }
+  .ev-stat-val { font-size: 13px; font-weight: 700; }
+  .ev-stat-label { font-size: 10px; color: #8892a8; text-transform: uppercase; }
+  .ev-exceptions { padding: 0 14px 10px; }
+  .ev-exceptions-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; color: #8892a8; margin-bottom: 6px; }
+  .ev-exc-item { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12px; border-bottom: 1px solid #f3f4f6; }
+  .ev-exc-item:last-child { border-bottom: none; }
+  .ev-exc-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .ev-exc-dot.red { background: #f87171; }
+  .ev-exc-dot.amber { background: #fbbf24; }
+  .ev-exc-dot.yellow { background: #facc15; }
+  .ev-exc-name { font-weight: 600; flex: 1; }
+  .ev-exc-time { font-size: 11px; color: #8892a8; }
+  .ev-unmatched-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #8892a8; margin: 20px 0 10px; padding-bottom: 6px; border-bottom: 1px solid #e5e7eb; }
+  .ev-empty { text-align: center; padding: 40px 20px; color: #8892a8; }
+  .ev-btn { display: none; }
+  .ev-waypoints { padding: 0 14px 10px; }
+  .ev-waypoints-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; color: #8892a8; margin-bottom: 6px; }
+  .ev-waypoint { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; border-bottom: 1px solid #f3f4f6; }
+  .ev-waypoint:last-child { border-bottom: none; }
+  .ev-waypoint-dot { width: 6px; height: 6px; border-radius: 50%; background: #4a9eff; flex-shrink: 0; }
+  .ev-waypoint-time { flex: 1; font-weight: 500; }
+  .ev-waypoint-coords { font-size: 10px; color: #8892a8; font-family: monospace; }
+  .report-footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 11px; color: #8892a8; }
+</style>
+</head>
+<body>
+${content}
+<div class="report-footer">Generated ${timestamp} — Fleet Command Center powered by Geotab</div>
+</body>
+</html>`;
+}
+
+
 // ── Vehicle Events ──────────────────────────────────────────────────────
 
 const EVENT_SEVERITY = {
@@ -1314,7 +1889,7 @@ const EVENT_SEVERITY = {
 
 async function loadVehicleEvents(deviceId) {
     const container = document.getElementById("vehicleEvents");
-    const btn = container?.previousElementSibling;
+    const btn = document.getElementById("evQuickViewBtn");
     if (!container) return;
     if (btn) { btn.disabled = true; btn.textContent = "Loading..."; }
 
@@ -1323,7 +1898,7 @@ async function loadVehicleEvents(deviceId) {
         const data = await resp.json();
         const events = data.exceptions || [];
 
-        if (btn) btn.style.display = "none";
+        if (btn) { btn.disabled = true; btn.textContent = `${events.length} Events`; }
 
         if (events.length === 0) {
             container.innerHTML = '<div class="event-empty">No safety events found</div>';
@@ -1341,7 +1916,7 @@ async function loadVehicleEvents(deviceId) {
         }).join("") + (events.length > 10 ? `<div class="event-meta" style="text-align:center;padding:6px">+${events.length - 10} more</div>` : "");
     } catch (err) {
         container.innerHTML = '<div class="event-empty">Failed to load events</div>';
-        if (btn) { btn.disabled = false; btn.textContent = "View Events"; }
+        if (btn) { btn.disabled = false; btn.textContent = "Quick View"; }
     }
 }
 
@@ -1415,6 +1990,9 @@ function updateVehicleList() {
                     <div class="vehicle-meta">${meta}</div>
                     ${driverLine}
                 </div>
+                <button class="vehicle-events-btn" onclick="event.stopPropagation(); openEventsSlideout('${eid}')" title="Event timeline">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                </button>
                 <span class="vehicle-speed">${speed}</span>
             </div>
         `;
