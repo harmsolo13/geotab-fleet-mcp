@@ -384,22 +384,36 @@ def api_zones_suggest():
             vehicles = client.get_vehicles(limit=500)
             _cache_set("vehicles", vehicles, "vehicles")
 
-        # Collect stop points from cached trip data across all vehicles
+        # Collect stop points from cached trip data only (no live API calls)
+        # This keeps the endpoint fast and non-blocking for the Flask thread.
         stop_points = []
-        for v in vehicles[:50]:  # cap at 50 vehicles to keep it fast
+        uncached = 0
+        for v in vehicles:
             cache_key = f"trips_{v['id']}_None_None"
             trip_data = _cache_get(cache_key)
             if trip_data is None:
-                try:
-                    trips = client.get_trips(device_id=v["id"], limit=50)
-                    trip_data = {"count": len(trips), "trips": trips}
-                    _cache_set(cache_key, trip_data, "trips")
-                except Exception:
-                    continue
+                uncached += 1
+                continue  # skip — don't block on Geotab API calls
             for trip in (trip_data.get("trips") or []):
                 sp = trip.get("stopPoint")
                 if sp and sp.get("x") is not None and sp.get("y") is not None:
                     stop_points.append((sp["y"], sp["x"]))  # lat, lng
+
+        if not stop_points and uncached > 0:
+            # No cached data yet — trigger background trip loading for first 20 vehicles
+            # and tell the user to try again shortly
+            import threading
+            def _warm_trips():
+                for v in vehicles[:20]:
+                    ck = f"trips_{v['id']}_None_None"
+                    if _cache_get(ck) is None:
+                        try:
+                            trips = client.get_trips(device_id=v["id"], limit=50)
+                            _cache_set(ck, {"count": len(trips), "trips": trips}, "trips")
+                        except Exception:
+                            pass
+            threading.Thread(target=_warm_trips, daemon=True).start()
+            return jsonify({"suggestions": [], "message": "Loading trip data — try again in a few seconds"})
 
         if not stop_points:
             return jsonify({"suggestions": [], "message": "No trip stop data available"})
@@ -427,18 +441,75 @@ def api_zones_suggest():
         candidates.sort(key=lambda c: c["stop_count"], reverse=True)
         suggestions = candidates[:8]
 
-        # Assign names and types
+        # Gather existing zone names to avoid duplicates
         existing_zones = _cache_get("api_zones")
-        existing_names = set()
+        existing_names = []
         if existing_zones:
-            for z in existing_zones.get("zones", []):
-                existing_names.add((z.get("name") or "").lower())
+            existing_names = [z.get("name", "") for z in existing_zones.get("zones", []) if z.get("name")]
 
-        for i, s in enumerate(suggestions):
-            zone_type = "depot" if s["stop_count"] >= 8 else "delivery" if s["stop_count"] >= 5 else "service"
-            base_name = f"Frequent Stop Area {i + 1}"
-            s["name"] = base_name
-            s["type"] = zone_type
+        # --- Gemini AI analysis for intelligent naming/typing ---
+        gemini_ok = False
+        try:
+            import google.genai as genai
+            api_key = os.environ.get("GEMINI_API_KEY", "")
+            if api_key:
+                gclient = genai.Client(api_key=api_key)
+                cluster_summary = [{"lat": s["lat"], "lng": s["lng"], "stop_count": s["stop_count"]} for s in suggestions]
+                prompt = (
+                    "You are a fleet operations analyst. Analyze these vehicle stop clusters and return ONLY a JSON array.\n"
+                    f"Existing zone names (avoid duplicates): {json.dumps(existing_names)}\n\n"
+                    "For each cluster, return one object with exactly these keys:\n"
+                    '- "name": short descriptive zone name (e.g. "Main Depot", "CBD Delivery Hub")\n'
+                    '- "type": one of depot|delivery|service|risk|custom\n'
+                    '- "radius_m": optimal radius in meters (200-800)\n'
+                    '- "reasoning": one sentence explaining why this zone matters\n\n'
+                    "Return ONLY a valid JSON array. No markdown, no explanation.\n\n"
+                    f"Clusters:\n{json.dumps(cluster_summary)}"
+                )
+                response = gclient.models.generate_content(
+                    model="gemini-3-flash-preview",
+                    contents=prompt,
+                    config=genai.types.GenerateContentConfig(
+                        temperature=0.3,
+                        max_output_tokens=2048,
+                    ),
+                )
+                analysis_text = response.text or ""
+                # Strip markdown fences if present
+                analysis_text = re.sub(r"^```(?:json)?\s*", "", analysis_text.strip())
+                analysis_text = re.sub(r"\s*```$", "", analysis_text.strip())
+                gemini_data = json.loads(analysis_text)
+                if isinstance(gemini_data, list) and len(gemini_data) == len(suggestions):
+                    for i, s in enumerate(suggestions):
+                        g = gemini_data[i]
+                        s["name"] = g.get("name", f"Zone {i + 1}")
+                        s["type"] = g.get("type", "custom")
+                        s["radius_m"] = int(g.get("radius_m", 500))
+                        s["reasoning"] = g.get("reasoning", "")
+                    gemini_ok = True
+        except Exception as e:
+            print(f"[zone-suggest] Gemini error: {e}", flush=True)
+
+        if not gemini_ok:
+            # Mechanical fallback
+            for i, s in enumerate(suggestions):
+                s["type"] = "depot" if s["stop_count"] >= 8 else "delivery" if s["stop_count"] >= 5 else "service"
+                s["name"] = f"Frequent Stop Area {i + 1}"
+                s["reasoning"] = ""
+
+        # --- Ace AI validation (optional, 30s timeout) ---
+        try:
+            client = _get_client()
+            zone_summary = ", ".join(f'{s["name"]} ({s["type"]}, {s["stop_count"]} stops)' for s in suggestions)
+            ace_question = f"We identified these fleet zones: {zone_summary}. Any risk areas or operational insights for these locations?"
+            ace_result = client.ace_query(ace_question, timeout=30)
+            ace_text = ace_result.get("answer", "") or ace_result.get("text", "")
+            if ace_text:
+                # Distribute Ace insight to each suggestion
+                for s in suggestions:
+                    s["ace_insight"] = ace_text
+        except Exception as e:
+            print(f"[zone-suggest] Ace error: {e}", flush=True)
 
         return jsonify({"suggestions": suggestions, "total_stops": len(stop_points)})
     except Exception as e:

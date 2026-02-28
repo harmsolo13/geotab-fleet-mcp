@@ -345,7 +345,8 @@ body {
 
 .zone-section {
     padding: 16px 20px 0;
-    flex: 0 0 auto;
+    flex: 1;
+    overflow-y: auto;
     min-height: 0;
 }
 
@@ -380,7 +381,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    max-height: 200px;
+    max-height: 35vh;
     overflow-y: auto;
     padding-bottom: 12px;
 }
@@ -486,6 +487,28 @@ body {
 
 .zone-create-btn:hover {
     background: rgba(16, 185, 129, 0.2);
+}
+
+.zone-item-reasoning {
+    font-size: 11px;
+    font-style: italic;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.zone-ace-badge {
+    display: inline-block;
+    background: rgba(139, 92, 246, 0.15);
+    color: #a78bfa;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 4px;
+    margin-left: 4px;
+    vertical-align: middle;
+    cursor: help;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 /* Light theme overrides */

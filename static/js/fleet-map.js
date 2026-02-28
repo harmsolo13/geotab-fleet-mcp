@@ -1021,10 +1021,14 @@ async function suggestZones() {
     suggestionCircles = [];
 
     try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 60000);
         const resp = await fetch("/api/zones/suggest", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            signal: controller.signal,
         });
+        clearTimeout(timeout);
         const data = await resp.json();
         if (data.error) {
             showToast("Suggestion failed: " + data.error, "error");
@@ -1033,7 +1037,7 @@ async function suggestZones() {
 
         const suggestions = data.suggestions || [];
         if (suggestions.length === 0) {
-            showToast("No zone suggestions — need more trip data", "info");
+            showToast(data.message || "No zone suggestions — need more trip data", "info");
             return;
         }
 
@@ -1061,10 +1065,13 @@ async function suggestZones() {
             const existingHTML = list.innerHTML.includes("zone-empty") ? "" : list.innerHTML;
             const suggestHTML = suggestions.map((s, i) => {
                 const color = ZONE_COLORS[s.type] || ZONE_COLORS.custom;
+                const reasoningHTML = s.reasoning ? `<div class="zone-item-reasoning">${escapeHTML(s.reasoning)}</div>` : '';
+                const aceBadge = s.ace_insight ? `<span class="zone-ace-badge" title="${escapeHTML(s.ace_insight)}">Ace</span>` : '';
                 return `<div class="zone-item zone-suggestion" style="--zone-color: ${color}" onclick="panToSuggestion(${s.lat}, ${s.lng})">
                     <div class="zone-item-info">
-                        <div class="zone-item-name">${escapeHTML(s.name)}</div>
+                        <div class="zone-item-name">${escapeHTML(s.name)} ${aceBadge}</div>
                         <div class="zone-item-meta">${s.stop_count} stops &middot; ${s.radius_m}m</div>
+                        ${reasoningHTML}
                     </div>
                     <span class="zone-type-badge ${s.type}">${s.type}</span>
                     <button class="zone-create-btn" onclick="event.stopPropagation(); createSuggestedZone(${i})" data-suggest-idx="${i}">Create</button>
