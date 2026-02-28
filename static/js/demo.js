@@ -173,9 +173,6 @@ function demoPreCacheAudio(extraLines) {
 function demoWarmUp() {
     if (!DEMO_STEPS.length) buildDemoSteps();
     const lines = _collectDemoLines([]);
-    // Add the AI intro line
-    const introClean = "Starting the Fleet Command Center demo. Sit back and enjoy the tour! Leda from Google Gemini will run you through the functions of the system.";
-    lines.push({ text: introClean, voice: "assistant" });
 
     showToast("Pre-recording demo voices...", "info", 60000);
     fetch("/api/tts/warmup", {
@@ -208,20 +205,8 @@ function demoSpeak(text, onEnd, voice) {
         return;
     }
 
-    // If placeholder exists (in-flight), wait up to 15s for it
-    if (_ttsCache.has(key) && cached === null) {
-        let waited = 0;
-        const pollCache = () => {
-            const blob = _ttsCache.get(key);
-            if (blob) { _playBlob(blob, onEnd); return; }
-            waited += 300;
-            if (waited < 15000) { setTimeout(pollCache, 300); return; }
-            // Timed out — fetch directly
-            _fetchAndPlay(clean, voiceName, key, onEnd);
-        };
-        setTimeout(pollCache, 300);
-        return;
-    }
+    // If placeholder exists (in-flight pre-cache), don't wait — fetch directly
+    // The pre-cache will populate for later steps in the background
 
     // Not cached — fetch and play
     _fetchAndPlay(clean, voiceName, key, onEnd);
@@ -365,8 +350,8 @@ function demoVoiceQuery(text, callback) {
 const DEMO_STEPS = [];
 
 function demoStep(label, narration, action, pauseAfter) {
-    // Default 1s gap after narrated steps for natural pacing
-    const pause = (pauseAfter != null && pauseAfter > 0) ? pauseAfter : (narration ? 1000 : 0);
+    // Default 600ms gap after narrated steps for tight pacing (voice unaffected)
+    const pause = (pauseAfter != null && pauseAfter > 0) ? pauseAfter : (narration ? 600 : 0);
     DEMO_STEPS.push({ label, narration, action, pauseAfter: pause });
 }
 
@@ -448,7 +433,7 @@ function runNextDemoStep() {
                 if (!demoRunning) return;
                 chatSending = false; // Force-reset in case prior query hasn't fully cleared
                 sendMessage();
-                const t = setTimeout(runNextDemoStep, step.pauseAfter || 500);
+                const t = setTimeout(runNextDemoStep, step.pauseAfter || 400);
                 demoTimeouts.push(t);
             });
         };
@@ -468,7 +453,7 @@ function runNextDemoStep() {
             demoTimeouts.push(t);
         });
     } else {
-        const t = setTimeout(runNextDemoStep, step.pauseAfter || 1000);
+        const t = setTimeout(runNextDemoStep, step.pauseAfter || 600);
         demoTimeouts.push(t);
     }
 }
@@ -511,249 +496,26 @@ function buildDemoSteps() {
     const getMovingVehicle = () => vehicles.find(v => v.speed && v.speed > 2);
     const getAnyVehicle = () => vehicles.find(v => v.latitude && v.longitude);
 
-    // Opening
+    // Opening + Fleet Overview (merged)
     demoStep(
         "Fleet Command Center — Live Dashboard",
-        "Thank you. This is GeotabVibe — a Fleet Command Center built on the Geotab SDK with Google Maps and Gemini AI. Let's take a tour of the dashboard.",
-        null,
-        0
-    );
-
-    // Fleet Overview
-    demoStep(
-        "Fleet overview — all vehicles on map",
-        "The dashboard connects to a live Geotab fleet — and renders every vehicle on the map in real time. On the left, you can see fleet stats — total vehicles, how many are moving, stopped, and active faults.",
+        "This is the Geotab Fleet Command Center, built on the Geotab SDK with Google Maps and Gemini AI — it shows a live Geotab fleet — and renders every vehicle on the map in real time.",
         () => fitAllVehicles(),
         0
     );
 
-    // KPIs
-    demoStep(
-        "Real-time fleet stats and KPIs",
-        "Below that, fleet KPIs are aggregated from trip data — total distance, trip count, idle percentage, driving hours, top speed, and exception events. These update every 60 seconds.",
-        null,
-        0
-    );
-
-    // Vehicle Selection
-    demoStep(
-        "Selecting a vehicle for detailed view",
-        "Clicking a vehicle — either on the map or in the sidebar — opens a detail panel with driver info, department, make and model, VIN, odometer, engine hours, and recent trip history.",
-        () => {
-            const v = getMovingVehicle() || getAnyVehicle();
-            if (v) selectVehicle(v.id);
-        },
-        0
-    );
-
-    // Detail Panel
-    demoStep(
-        "Vehicle detail: driver, department, trips, faults",
-        "The detail panel shows enriched data — driver names, departments, vehicle types — overlaid on live Geotab API data. Active faults for this vehicle are listed with diagnostic codes.",
-        null,
-        0
-    );
-
-    // Solo Mode ON — before replay
-    demoStep(
-        "Solo Mode — focused tracking",
-        "We're entering Solo Mode to focus on this single vehicle during replay. Solo Mode hides all other fleet markers, but we can toggle it off at any time to see the full fleet.",
-        () => { if (!soloMode) toggleSoloMode(); },
-        0
-    );
-
-    // Trip Replay
-    demoStep(
-        "Trip Replay — animated GPS trail",
-        "Each trip has a replay button. This loads the raw GPS log records and draws a speed-colored path on the map. Green is slow, yellow is cruising, red is high speed.",
-        () => {
-            const v = getMovingVehicle() || getAnyVehicle();
-            if (v) {
-                const now = new Date().toISOString();
-                const week = new Date(Date.now() - 7 * 86400000).toISOString();
-                startTripReplay(v.id, week, now);
-            }
-        },
-        500
-    );
-
-    // Replay HUD
-    demoStep(
-        "Replay HUD — speed, distance, time",
-        "The replay plays at 5 times speed with a heads-up display — real-time speed, acceleration, cumulative distance, elapsed time, average and max speed. All pre-computed for smooth playback.",
-        () => {
-            const speedSelect = document.getElementById("replaySpeed");
-            if (speedSelect) { speedSelect.value = "5"; setReplaySpeed("5"); }
-            playReplay();
-        },
-        1500
-    );
-
-    // Speed Coloring + Solo Mode OFF
-    demoStep(
-        "Speed-colored path visualization",
-        "You can pause, scrub, and change playback speed. The marker and path segments update color instantly based on the vehicle's speed at each GPS point.",
-        () => pauseReplay(),
-        0
-    );
-    demoStep(
-        "Solo Mode off — full fleet restored",
-        "And here we toggle Solo Mode off, bringing all fleet vehicles back into view.",
-        () => { if (soloMode) toggleSoloMode(); },
-        0
-    );
-
-    // Activity Heatmap — before report so map is visible
-    demoStep(
-        "Activity Heatmap — fleet density",
-        "The activity heatmap visualizes fleet density using vehicle positions with weighted clusters — showing depot areas, route corridors, and hotspot hubs across the fleet's operating area.",
-        () => {
-            closeReplay();
-            closeDetail();
-            toggleHeatmap();
-        },
-        0
-    );
-
-    // Heatmap commentary
-    demoStep(
-        "Heatmap: depots, corridors, hotspots",
-        "Bright spots indicate depot areas and frequent stops. The gradient trails reveal common route corridors and delivery clusters. This uses real trip stop data from the fleet.",
-        null,
-        0
-    );
-
-    // Fleet Report — open slideout, keep it open, show resize while it generates
-    demoStep(
-        "Fleet Report — AI-powered analysis",
-        "Now let's generate the fleet report. This queries Geotab's Ace AI for fleet insights, then passes the data to Gemini 3 to generate a styled executive report.",
-        () => {
-            if (heatmapVisible) toggleHeatmap();
-            openSlideout("report");
-        },
-        500
-    );
-
-    // Resize the panel silently, then comment on it
-    demoStep(
-        "Resizable slide out panel",
-        null,
-        () => {
-            const panel = document.getElementById("slideoutPanel");
-            if (panel) {
-                panel.style.transition = "width 0.6s ease";
-                panel.style.width = "650px";
-                setTimeout(() => { panel.style.transition = ""; }, 700);
-            }
-        },
-        800
-    );
-    demoStep(
-        null,
-        "Note we have resized the panel to allow the report to be viewed easier. The slide out panel is fully resizable by dragging the left edge. This works for both the report and the guide.",
-        null,
-        0
-    );
-
-    // Poll until report is actually done
-    DEMO_STEPS.push({
-        label: "Generating report...",
-        narration: null,
-        action: null,
-        pauseAfter: 0,
-        waitFor: () => {
-            const body = document.getElementById("slideoutBody");
-            if (!body) return true;
-            return !body.querySelector(".report-spinner");
-        },
-        waitTimeout: 90000
-    });
-
-    // Report Content
-    demoStep(
-        "Report: KPIs, analysis, recommendations",
-        "The report includes an executive summary, fleet overview with KPIs, top performers, anomalies and concerns, Ace AI analysis, and actionable recommendations.",
-        null,
-        0
-    );
-
-    // Report Actions — scroll through
-    demoStep(
-        "Report actions: print, save, export",
-        "You can print the report, save it as HTML, or export to PDF — all from the action buttons at the top.",
-        () => {
-            const body = document.getElementById("slideoutBody");
-            if (body) {
-                let scrollPos = 0;
-                const scrollInterval = setInterval(() => {
-                    scrollPos += 3;
-                    body.scrollTop = scrollPos;
-                    if (scrollPos >= body.scrollHeight - body.clientHeight || !demoRunning) {
-                        clearInterval(scrollInterval);
-                    }
-                }, 30);
-            }
-        },
-        0
-    );
-
-    // User Guide
-    demoStep(
-        "User Guide — full documentation",
-        "Switching to the Guide tab loads the complete user guide inside the same slide out panel — covering every feature, control, and keyboard shortcut. No need to leave the dashboard.",
-        () => switchSlideoutTab("guide"),
-        0
-    );
-
-    // Scroll guide — scroll all the way to the bottom
-    demoStep(
-        "Comprehensive guide: 10 sections",
-        "The guide covers fleet stats, KPIs, map controls, vehicle detail panel, trip replay, reports, the chat assistant, themes, and tips. Everything stays in context.",
-        () => {
-            const body = document.getElementById("slideoutBody");
-            if (body) {
-                let scrollPos = 0;
-                const maxScroll = body.scrollHeight - body.clientHeight;
-                const scrollInterval = setInterval(() => {
-                    scrollPos += 6;
-                    body.scrollTop = scrollPos;
-                    if (scrollPos >= maxScroll || !demoRunning) {
-                        clearInterval(scrollInterval);
-                    }
-                }, 20);
-            }
-        },
-        0
-    );
-
-    // Pop-out
-    demoStep(
-        "Pop-out: standalone tab for sharing",
-        "The pop-out button opens either the report or the guide in a standalone browser tab for sharing or printing separately.",
-        null,
-        0
-    );
-
-    // Transition line before chat section
-    demoStep(
-        null,
-        "Ok, let's try it and take a look at the responses.",
-        () => closeSlideout(),
-        0
-    );
-
-    // Fleet Assistant — open chat
+    // Fleet Assistant — open chat early
     demoStep(
         "Fleet Assistant — AI chat with Gemini",
-        "The Fleet Assistant is a conversational AI powered by Gemini with function calling. It has access to 12 Geotab API tools — vehicles, trips, faults, drivers, zones, fuel transactions, exceptions, and Ace AI. GeotabVibe also includes an MCP server, allowing any external AI assistant to connect and manage the fleet through natural language.",
+        "Starting with the Fleet Assistant, it is a conversational AI powered by Gemini with function calling. It has access to 12 Geotab API tools — including vehicles, trips, drivers, Ace AI and more. It also includes an MCP server, allowing any external AI assistant to connect and manage the fleet through natural language.",
         () => { if (!chatOpen) toggleChat(); },
         0
     );
 
-    // Chat Query — narration first, then voice query with TTS + typewriter, then send
+    // Chat Query 1 — which vehicles are moving
     DEMO_STEPS.push({
         label: "Asking: Which vehicles are moving?",
-        narration: "Asking 'which vehicles are moving right now' triggers a function call to the Geotab API. Gemini retrieves the data and responds conversationally with specific vehicle names and speeds.",
+        narration: "Ok, let's look at 3 chat commands. They will trigger a function call to the Geotab API. Gemini retrieves the data and responds conversationally.",
         action: () => {
             chatSending = false;
             window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
@@ -762,7 +524,7 @@ function buildDemoSteps() {
         pauseAfter: 0,
     });
 
-    // Wait for a new ASSISTANT message, then narrator summarises the response
+    // Wait for response
     DEMO_STEPS.push({
         label: "Waiting for AI response...",
         narration: null,
@@ -776,10 +538,10 @@ function buildDemoSteps() {
         waitTimeout: 90000
     });
 
-    // Safety query — exception events
+    // Chat Query 2 — speeding violations
     DEMO_STEPS.push({
         label: "Asking: Any speeding violations?",
-        narration: "Now asking about speeding violations. This calls the exception events API to retrieve rule violations from the fleet.",
+        narration: null,
         action: () => {
             chatSending = false;
             window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
@@ -802,10 +564,10 @@ function buildDemoSteps() {
         waitTimeout: 90000
     });
 
-    // Send driver message — action command
+    // Chat Query 3 — send driver message
     DEMO_STEPS.push({
         label: "Action: Send message to driver",
-        narration: "The assistant can also send messages directly to in-cab devices. This triggers a text message function call to the vehicle's Geotab GO device.",
+        narration: "The assistant can also send messages directly to in-cab devices, and triggers a text message function call to the vehicle's Geotab GO device.",
         action: () => {
             chatSending = false;
             window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
@@ -828,7 +590,234 @@ function buildDemoSteps() {
         waitTimeout: 90000
     });
 
-    // Zone Intelligence — AI suggestions
+    // Fleet Stats + KPIs
+    demoStep(
+        "Fleet stats and KPIs",
+"Now looking around the dashboard, on the left, you can see fleet stats — total vehicles, how many are moving, stopped and any active faults are listed with diagnostic codes. Below that, fleet KPIs are aggregated from trip data. These update every 60 seconds.",
+        null,
+        0
+    );
+
+    // Vehicle Selection + Detail
+    demoStep(
+        "Vehicle detail panel",
+        "Clicking a vehicle — either on the map or in the sidebar — opens an enriched detail panel with unit info and recent trip history — overlaid on live Geotab API data.",
+        () => {
+            const v = getMovingVehicle() || getAnyVehicle();
+            if (v) selectVehicle(v.id);
+        },
+        0
+    );
+
+    // Solo Mode ON + Trip Replay (merged)
+    demoStep(
+        "Solo Mode + Trip Replay",
+        "Lets quickly enter Solo Mode. Each trip has a replay button. This loads the raw GPS log records and draws a speed-colored path on the map. Green is slow, yellow is cruising, red is high speed.",
+        () => {
+            if (!soloMode) toggleSoloMode();
+            const v = getMovingVehicle() || getAnyVehicle();
+            if (v) {
+                const now = new Date().toISOString();
+                const week = new Date(Date.now() - 7 * 86400000).toISOString();
+                startTripReplay(v.id, week, now);
+            }
+        },
+        500
+    );
+
+    // Replay HUD
+    demoStep(
+        "Replay HUD — speed, distance, time",
+        "The replay plays at 5 times speed with a heads-up display with real-time trip data. All pre-computed for smooth playback.",
+        () => {
+            const speedSelect = document.getElementById("replaySpeed");
+            if (speedSelect) { speedSelect.value = "5"; setReplaySpeed("5"); }
+            playReplay();
+        },
+        1000
+    );
+
+    // Pause + Events Panel (merged step)
+    demoStep(
+        "Events Panel — vehicle activity timeline",
+        "You can pause, scrub, and change playback speed. For a deeper dive, the Events panel shows a full timeline for each vehicle — Safety events like speeding, harsh braking, and collisions are color-coded and nested within their trips. And here we toggle Solo Mode off.",
+        () => {
+            pauseReplay();
+            const v = getMovingVehicle() || getAnyVehicle();
+            if (v) openEventsSlideout(v.id);
+        },
+        500
+    );
+
+    // Wait for events to load, scroll through
+    DEMO_STEPS.push({
+        label: "Loading event timeline...",
+        narration: null,
+        action: null,
+        pauseAfter: 0,
+        waitFor: () => {
+            const body = document.getElementById("slideoutBody");
+            if (!body) return true;
+            return !body.querySelector(".loading") && body.querySelector(".ev-trip");
+        },
+        waitTimeout: 30000
+    });
+
+    // Scroll through events panel briefly
+    demoStep(
+        "Trips, stops, and safety events",
+        null,
+        () => {
+            const body = document.getElementById("slideoutBody");
+            if (body) {
+                let scrollPos = 0;
+                const scrollInterval = setInterval(() => {
+                    scrollPos += 5;
+                    body.scrollTop = scrollPos;
+                    if (scrollPos >= body.scrollHeight - body.clientHeight || !demoRunning) {
+                        clearInterval(scrollInterval);
+                    }
+                }, 25);
+            }
+        },
+        1800
+    );
+
+    // Close events + solo mode off (silent transition)
+    demoStep(
+        null,
+        null,
+        () => {
+            closeSlideout();
+            if (soloMode) toggleSoloMode();
+        },
+        400
+    );
+
+    // Activity Heatmap
+    demoStep(
+        "Activity Heatmap — fleet density",
+        "The activity heatmap visualizes fleet density using vehicle positions with weighted clusters — showing depot areas, route corridors, and hotspot hubs across the fleet's operating area.",
+        () => {
+            closeReplay();
+            closeDetail();
+            toggleHeatmap();
+        },
+        0
+    );
+
+    // Fleet Report
+    demoStep(
+        "Fleet Report — AI-powered analysis",
+        "Now let's generate the fleet report. This queries Geotab's Ace AI for fleet insights, then passes the data to Gemini 3 to generate a styled executive report.",
+        () => {
+            if (heatmapVisible) toggleHeatmap();
+            openSlideout("report");
+        },
+        500
+    );
+
+    // Resize panel silently, then comment
+    demoStep(
+        "Resizable slide out panel",
+        null,
+        () => {
+            const panel = document.getElementById("slideoutPanel");
+            if (panel) {
+                panel.style.transition = "width 0.6s ease";
+                panel.style.width = "650px";
+                setTimeout(() => { panel.style.transition = ""; }, 700);
+            }
+        },
+        600
+    );
+    demoStep(
+        null,
+        "The slide out panel is fully resizable by dragging the left edge. This works for both the report, the guide and the event panel.",
+        null,
+        0
+    );
+
+    // Poll until report is done
+    DEMO_STEPS.push({
+        label: "Generating report...",
+        narration: null,
+        action: null,
+        pauseAfter: 0,
+        waitFor: () => {
+            const body = document.getElementById("slideoutBody");
+            if (!body) return true;
+            return !body.querySelector(".report-spinner");
+        },
+        waitTimeout: 90000
+    });
+
+    // Report Content
+    demoStep(
+        "Report: fleet data, AI analysis, recommendations",
+        "The report contains detailed fleet data, Ace AI analysis, and actionable recommendations.",
+        null,
+        0
+    );
+
+    // Report Actions — scroll through
+    demoStep(
+        "Report actions: print, save, export",
+        "You can print the report, save it as HTML or PDF — all from the action buttons at the top.",
+        () => {
+            const body = document.getElementById("slideoutBody");
+            if (body) {
+                let scrollPos = 0;
+                const scrollInterval = setInterval(() => {
+                    scrollPos += 4;
+                    body.scrollTop = scrollPos;
+                    if (scrollPos >= body.scrollHeight - body.clientHeight || !demoRunning) {
+                        clearInterval(scrollInterval);
+                    }
+                }, 30);
+            }
+        },
+        0
+    );
+
+    // User Guide + Pop-out (combined)
+    demoStep(
+        "User Guide — full documentation",
+        "Switching to the Guide tab loads the complete user guide inside the same slide out panel. No need to leave the dashboard, however the pop-out button opens either the report or the guide in a standalone browser tab if desired.",
+        () => switchSlideoutTab("guide"),
+        0
+    );
+
+    // Scroll guide
+    demoStep(
+        "Comprehensive guide",
+        null,
+        () => {
+            const body = document.getElementById("slideoutBody");
+            if (body) {
+                let scrollPos = 0;
+                const maxScroll = body.scrollHeight - body.clientHeight;
+                const scrollInterval = setInterval(() => {
+                    scrollPos += 8;
+                    body.scrollTop = scrollPos;
+                    if (scrollPos >= maxScroll || !demoRunning) {
+                        clearInterval(scrollInterval);
+                    }
+                }, 20);
+            }
+        },
+        0
+    );
+
+    // Close slideout, transition to zones
+    demoStep(
+        null,
+        null,
+        () => closeSlideout(),
+        400
+    );
+
+    // Zone Intelligence
     demoStep(
         "Zone Intelligence — AI-powered suggestions",
         "The Zone Intelligence panel uses Gemini AI to analyze trip stop-point clusters — generating intelligent zone names, types, and radii. Ace AI then validates the suggestions with fleet intelligence.",
@@ -838,7 +827,7 @@ function buildDemoSteps() {
         0
     );
 
-    // Wait for suggestions to appear
+    // Wait for suggestions
     DEMO_STEPS.push({
         label: "Analyzing trip patterns...",
         narration: null,
@@ -848,16 +837,14 @@ function buildDemoSteps() {
             const items = document.querySelectorAll("#zoneList .zone-suggestion");
             return items.length > 0;
         },
-        resultNarration: "Gemini analyzed the trip stop clusters and generated intelligent zone names, types, and reasoning. If Ace responded in time, you'll see a purple Ace badge with fleet validation insights. You can create any suggestion with one click.",
         waitTimeout: 60000
     });
 
-    // Zone Alerts — entry/exit monitoring
+    // Zone Alerts
     demoStep(
         "Zone Alerts — entry and exit monitoring",
-        "Each zone now has a bell icon for entry and exit alerts. Risk zones automatically enable alerts when created. The system checks every 10 seconds whether vehicles have entered or exited a monitored zone — and fires a toast notification on any state change. Zero additional API calls — all computed client-side from existing data.",
+        "Risk zones automatically enable alerts when created, otherwise alerts can be set manually. The system checks every 10 seconds whether vehicles have entered or exited a monitored zone — and fires a toast notification on any state change.",
         () => {
-            // Toggle alert on the first zone if available
             const firstZone = zoneData.find(z => z.id);
             if (firstZone) {
                 toggleZoneAlert(firstZone.id, firstZone.name || "Zone", true);
@@ -869,12 +856,12 @@ function buildDemoSteps() {
     // Theme Toggle
     demoStep(
         "Theme Toggle — light and dark modes",
-        "The dashboard supports light and dark themes. The map styles, sidebar, panels, and all components adapt seamlessly.",
+        "The dashboard supports light and dark themes, all components adapt seamlessly.",
         () => {
             closeDetail();
             toggleTheme();
         },
-        1500
+        1000
     );
 
     // Toggle back
@@ -882,27 +869,27 @@ function buildDemoSteps() {
         null,
         null,
         () => toggleTheme(),
-        500
+        400
     );
 
-    // Final View — this is the last narrated step
+    // Final
     demoStep(
-        "GeotabVibe — Fleet Command Center",
-        "That's GeotabVibe — real-time fleet visualization, AI-powered analysis, conversational control, and trip replay — all in one dashboard. All actions were completed live by the AI while recording and running this demo. This demo can be triggered at any time by saying 'play the demo' in the chat. Thank you for watching.",
+        "Geotab Fleet Command Dashboard",
+        "That's Geotab Fleet Command Dashboard — real-time fleet visualization, AI-powered analysis, conversational control, and trip replay — all in one dashboard. All actions were completed live by the AI while recording and running this demo. This demo can be triggered at any time by saying 'play the demo' in the chat. Thank you for watching.",
         () => fitAllVehicles(),
-        3000
+        2000
     );
 }
 
 // ── Main Entry Point ──────────────────────────────────────────────────
 
-function runDemo() {
-    if (demoRunning) { stopDemo(); return; }
+// demoPrepare: setup that runs DURING the intro speech (overlapped)
+function demoPrepare() {
+    if (demoRunning) return;
     demoRunning = true;
     demoStepIndex = 0;
     demoTimeouts = [];
     createDemoOverlay();
-    startDemoTimer();
 
     // Build steps if not already built by pre-cache
     if (!DEMO_STEPS.length) buildDemoSteps();
@@ -915,9 +902,19 @@ function runDemo() {
     // Open chat panel and shift left so map features stay visible
     if (!chatOpen) toggleChat();
     demoChatLeft();
+}
 
-    // Start immediately — the AI intro voice has already played
+// demoStart: fires immediately when intro speech ends
+function demoStart() {
+    startDemoTimer();
     runNextDemoStep();
+}
+
+// Legacy entry point (manual trigger / ?demo=1)
+function runDemo() {
+    if (demoRunning) { stopDemo(); return; }
+    demoPrepare();
+    demoStart();
 }
 
 // ── Auto-start on ?demo=1 ────────────────────────────────────────────
