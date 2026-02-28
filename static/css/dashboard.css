@@ -622,6 +622,74 @@ body {
     margin-top: 2px;
 }
 
+/* ── Vehicle Events ─────────────────────────────────────────────────── */
+
+.events-load-btn {
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border-glass);
+    background: rgba(139, 92, 246, 0.1);
+    color: #a78bfa;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: var(--font);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    width: 100%;
+}
+
+.events-load-btn:hover {
+    background: rgba(139, 92, 246, 0.2);
+    border-color: rgba(139, 92, 246, 0.4);
+}
+
+.events-load-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.event-item {
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-glass);
+    border-left: 3px solid var(--text-muted);
+    margin-bottom: 6px;
+    font-size: 12px;
+}
+
+.event-item.event-red {
+    border-left-color: var(--accent-red);
+    background: rgba(248, 113, 113, 0.06);
+}
+
+.event-item.event-amber {
+    border-left-color: var(--accent-yellow);
+    background: rgba(251, 191, 36, 0.06);
+}
+
+.event-item.event-yellow {
+    border-left-color: #facc15;
+    background: rgba(250, 204, 21, 0.04);
+}
+
+.event-rule {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.event-meta {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+.event-empty {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 8px 0;
+}
+
 /* ── Sidebar Footer ──────────────────────────────────────────────────── */
 
 .sidebar-footer {
@@ -1056,6 +1124,24 @@ select, select option {
 [data-theme="light"] .trip-item {
     background: rgba(0, 0, 0, 0.03);
     border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .event-item {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .event-item.event-red {
+    background: rgba(220, 38, 38, 0.06);
+}
+
+[data-theme="light"] .event-item.event-amber {
+    background: rgba(217, 119, 6, 0.06);
+}
+
+[data-theme="light"] .events-load-btn {
+    background: rgba(124, 58, 237, 0.1);
+    color: #7c3aed;
 }
 
 [data-theme="light"] ::-webkit-scrollbar-thumb {
