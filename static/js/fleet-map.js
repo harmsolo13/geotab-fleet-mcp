@@ -831,9 +831,16 @@ function closeReplay() {
 
 function shortName(v) {
     const name = v.name || v.id;
-    // Extract first number sequence (e.g. "Unit 01 — Ford Transit" → "01")
-    const match = name.match(/\d+/);
-    return match ? match[0] : name.split(/[\s\-—]+/)[0];
+    // Extract "Unit XX" prefix (e.g. "Unit 01 — Ford Transit" → "Unit 01")
+    const match = name.match(/^(.+?)\s*[—\-]\s*/);
+    return match ? match[1].trim() : name;
+}
+
+function hoverName(v) {
+    const name = v.name || v.id;
+    // Extract vehicle type after dash (e.g. "Unit 01 — Ford Transit" → "Ford Transit")
+    const match = name.match(/[—\-]\s*(.+)$/);
+    return match ? match[1].trim() : name;
 }
 
 function updateMarkers() {
@@ -885,7 +892,7 @@ function updateMarkers() {
                 map: visible ? map : null,
                 position: pos,
                 content: markerEl,
-                title: v.name || v.id,
+                title: hoverName(v),
             });
 
             marker.addListener("click", () => selectVehicle(v.id));
