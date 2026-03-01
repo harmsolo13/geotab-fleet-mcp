@@ -541,7 +541,7 @@ function buildDemoSteps() {
     // Chat Query 2 — send driver message
     DEMO_STEPS.push({
         label: "Action: Send message to driver",
-        narration: "The assistant can also send messages directly to in-cab devices, and triggers a text message function call to the vehicle's Geotab GO device.",
+        narration: null,
         action: () => {
             chatSending = false;
             window._demoAssistantCount = document.querySelectorAll("#chatMessages .chat-bubble.assistant").length;
@@ -789,19 +789,6 @@ function buildDemoSteps() {
         },
         0
     );
-
-    // Wait for suggestions
-    DEMO_STEPS.push({
-        label: "Analyzing trip patterns...",
-        narration: null,
-        action: null,
-        pauseAfter: 500,
-        waitFor: () => {
-            const items = document.querySelectorAll("#zoneList .zone-suggestion");
-            return items.length > 0;
-        },
-        waitTimeout: 60000
-    });
 
     // Zone Alerts
     demoStep(
